@@ -20,10 +20,15 @@ static constexpr uint8_t LEFT = 0x80;
 static constexpr uint8_t LAST_X = 0x31;  // the 50th byte of a controller's RAM row
 // How long one loop() call may run the update's steps back to back, well inside ESPHome's 50 ms.
 static constexpr uint32_t STEP_BUDGET_MS = 25;
-// An active spell lasts until this long passes without an update; then the supplies go off, and
-// after CONTROLLER_IDLE_MS more the controllers sleep, so an update in between skips their reset.
+// The supplies stay on until ACTIVE_MS passes without an update, or for at most MAX_ACTIVE_MS at a
+// stretch however often updates come; then they go off, and after CONTROLLER_IDLE_MS more the
+// controllers sleep, so an update in between skips their reset.
 static constexpr uint32_t ACTIVE_MS = 5000;
+static constexpr uint32_t MAX_ACTIVE_MS = 60000;
 static constexpr uint32_t CONTROLLER_IDLE_MS = 10000;
+// An update the panel has not finished in this long has failed: a seven-grey refresh with its
+// cancelling pass takes about 5 s.
+static constexpr uint32_t UPDATE_DEADLINE_MS = 20000;
 
 // Display update control (0x22) sequences. The full one switches the supplies on, reads the
 // panel's temperature sensor, loads the matching OTP waveform, runs it and switches them off. The
@@ -309,8 +314,12 @@ void CrowPanel579::setup() {
   }
   // Waking from deep sleep, the panel kept its power, its picture and its RAM, so the count
   // carries on and the first update can be partial. Anything else starts from nothing.
-  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED)
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) {
     glass_rows_valid = false;
+    // A reboot part way through, a crash or an update over the air, can leave the controllers
+    // with their supplies on. Reset them and put them to sleep until the first update.
+    this->reset_controllers_();
+  }
   if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_UNDEFINED && this->is_using_partial_update_()) {
     this->update_count_ = slept_update_count % this->full_update_every_;
     ESP_LOGD(TAG, "Woke from deep sleep; the panel still holds its frame (update %u of %u)",
@@ -324,7 +333,7 @@ void CrowPanel579::setup() {
 void CrowPanel579::on_safe_shutdown() {
   this->cancel_timeout("idle");
   this->cancel_timeout("sleep");
-  while (this->copying_ && !this->send_planes_(this->copy_source_(), this->copy_source_())) {
+  while (this->copying_ && !this->send_planes_(WHITE_SOURCE, WHITE_SOURCE)) {
   }
   this->copying_ = false;
   using epaper_spi::EPaperState;
@@ -382,14 +391,10 @@ void HOT CrowPanel579::draw_pixel_at(int x, int y, Color color) {
   pair = (x & 1) ? (pair & 0xF0) | level : (pair & 0x0F) | level << 4;  // the first pixel in the high nibble
 }
 
-// An update cancels the wind-down. One asked for while the driver is settling waits for it.
+// An update cancels the wind-down.
 void CrowPanel579::update() {
   this->cancel_timeout("idle");
   this->cancel_timeout("sleep");
-  if (this->state_ != epaper_spi::EPaperState::IDLE) {
-    this->update_pending_ = true;
-    return;
-  }
   EPaperBase::update();
 }
 
@@ -404,21 +409,21 @@ bool CrowPanel579::reset() {
   return true;
 }
 
-// A software reset, then the internal temperature sensor; the refresh loads its own waveform.
-// The reset sets the controllers working, so BUSY is polled again after it.
+// A software reset, then the internal temperature sensor; every refresh loads its own waveform,
+// voltages and VCOM. The reset sets the controllers working, so BUSY is polled again after it.
 bool CrowPanel579::initialise(bool partial) {
   if (!this->is_idle_())
     return false;
   if (this->awake_)
     return true;
-  if (!this->reset_sent_) {
+  if (this->init_step_ == 0) {
     this->command(0x12);
-    this->reset_sent_ = true;
+    this->init_step_ = 1;
     this->delay_until_ = millis() + 10;  // BUSY rises a moment after the command
     return false;
   }
   this->cmd_data(0x18, {0x80});
-  this->reset_sent_ = false;
+  this->init_step_ = 0;
   this->awake_ = true;
   this->supplies_on_ = false;
   return true;
@@ -543,8 +548,8 @@ void CrowPanel579::find_unsettled_rows_() {
   this->end_row_ = first < 0 ? 1 : last + 1;
 }
 
-// Decides what an update is, at its first transfer: a partial refresh when the count says so,
-// fast when an active spell keeps the supplies on, or a full refresh, after cancelling any fast
+// Decides what an update is, at its first transfer: a partial refresh when the count says so, fast
+// whenever the driver knows what the glass shows, or a full refresh, after cancelling any fast
 // partials' pushes. A partial whose rows are all unchanged has nothing to send or refresh.
 void CrowPanel579::plan_update_() {
   this->pass_count_ = 0;
@@ -554,7 +559,7 @@ void CrowPanel579::plan_update_() {
       this->unchanged_ = true;
       return;
     }
-    const bool fast = this->supplies_on_ && this->glass_valid_;
+    const bool fast = this->glass_valid_;
     this->passes_[this->pass_count_++] = fast ? Pass::FAST : Pass::PARTIAL;
     ESP_LOGV(TAG, "%s refresh of rows %u to %u", fast ? "Fast partial" : "Partial", (unsigned) this->first_row_,
              (unsigned) this->end_row_ - 1);
@@ -580,13 +585,13 @@ void CrowPanel579::plan_update_() {
 // rows that have any. Every other pass sends both planes whole.
 bool CrowPanel579::transfer_data() {
   if (!this->pass_started_) {
-    if (this->pass_index_ == 0 && !this->settling_)
+    if (this->pass_index_ == 0)
       this->plan_update_();
     if (this->unchanged_)
       return true;
     this->pass_started_ = true;
     const Pass pass = this->passes_[this->pass_index_];
-    if (pass == Pass::CORRECT || pass == Pass::SETTLE) {
+    if (pass == Pass::CORRECT) {
       this->find_unsettled_rows_();
     } else if (pass != Pass::FAST && pass != Pass::PARTIAL) {
       this->first_row_ = 0;
@@ -606,7 +611,6 @@ bool CrowPanel579::transfer_data() {
     case Pass::HALF_TO_WHITE:
       return this->send_planes_(Source{HALF_HIGH_BITS.table, nullptr}, Source{HALF_LOW_BITS.table, nullptr});
     case Pass::CORRECT:
-    case Pass::SETTLE:
       return this->send_planes_(Source{nullptr, this->unsettled_}, Source{nullptr, this->glass_});
   }
   return true;
@@ -653,24 +657,28 @@ void CrowPanel579::refresh_screen(bool partial) {
     case Pass::CORRECT:
       this->load_waveform_(CORRECTION.bytes);
       break;
-    case Pass::SETTLE:
-      this->load_waveform_(SETTLE.bytes);
-      break;
     case Pass::BLACK_WHITE:
       break;
   }
   this->command(0x20);
 }
 
-// Loads a waveform and runs it without the OTP's temperature lookup and waveform, leaving the
-// supplies on afterwards for whatever comes next.
+// Loads a waveform and runs it, leaving the supplies on afterwards for whatever comes next. VSH1
+// and VSL are +15 V and -15 V, which the balance checks count on. VCOM is Waveshare's 0x30: three
+// minutes of frames driving nothing over a grey frame drifted the greys no more than the ink
+// settles on its own at anything from 0x20 to 0x30, where the panel's own OTP value lightened
+// dark greys by 0.06 and every grey by about 0.1. The booster's soft start is left at its reset
+// value, as Elecrow's firmware leaves it.
 void CrowPanel579::load_waveform_(const uint8_t *waveform) {
-  this->cmd_data(0x0C, {0x8B, 0x9C, 0xA4, 0x0F});  // booster soft start, as Waveshare sets it
   this->cmd_data(0x32, waveform, 227);
   this->cmd_data(0x3F, {waveform[227]});
   this->cmd_data(0x03, {waveform[228]});
   this->cmd_data(0x04, {waveform[229], waveform[230], waveform[231]});
   this->cmd_data(0x2C, {waveform[232]});
+  if (!this->supplies_on_) {
+    ESP_LOGV(TAG, "Supplies on");
+    this->supplies_since_ = millis();
+  }
   this->cmd_data(0x22, {this->supplies_on_ ? UPDATE_DISPLAY : UPDATE_SUPPLIES_DISPLAY});
   this->supplies_on_ = true;
 }
@@ -692,14 +700,6 @@ void CrowPanel579::power_off() {
   }
   const Pass last = this->passes_[this->pass_index_];
   this->pass_index_ = 0;
-  if (this->settling_) {
-    this->settling_ = false;
-    this->update_count_ = this->settle_saved_count_;
-    memset(this->unsettled_, 0, BIT_PLANE);
-    this->unsettled_count_ = 0;
-    this->copying_ = true;
-    return;
-  }
   if (this->unchanged_)
     return;
   this->record_glass_(last == Pass::FAST, this->passes_[0] == Pass::CORRECT);
@@ -728,6 +728,7 @@ void CrowPanel579::record_glass_(bool fast, bool corrected) {
   }
   glass_rows_valid = true;
   this->glass_valid_ = this->glass_ != nullptr;
+  this->status_clear_warning();
   this->unsettled_count_ = 0;
   if (this->glass_ != nullptr) {
     for (size_t i = 0; i != BIT_PLANE; i++)
@@ -737,22 +738,20 @@ void CrowPanel579::record_glass_(bool fast, bool corrected) {
     ESP_LOGV(TAG, "%u pixels a push out of balance", (unsigned) this->unsettled_count_);
 }
 
-// What the planes get after a refresh: the frame just drawn, or for settling, the glass as it was.
-CrowPanel579::Source CrowPanel579::copy_source_() const {
-  return this->settling_copy_ ? Source{nullptr, this->glass_} : WHITE_SOURCE;
-}
-
 // The base runs one step of the update a loop() call, and ESPHome calls loop() about every 16 ms,
 // so the steps run back to back here instead, until one has to wait (BUSY, a delay) or the
 // budget is spent.
 void CrowPanel579::loop() {
   const uint32_t start = millis();
+  if (this->state_ != epaper_spi::EPaperState::IDLE && start - this->update_start_time_ > UPDATE_DEADLINE_MS) {
+    this->give_up_();
+    return;
+  }
   while (millis() - start < STEP_BUDGET_MS) {
     if (this->copying_) {
-      if (!this->send_planes_(this->copy_source_(), this->copy_source_()))
+      if (!this->send_planes_(WHITE_SOURCE, WHITE_SOURCE))
         continue;
       this->copying_ = false;
-      this->settling_copy_ = false;
     }
     // Each pass is a full update to the base, and the count goes back so they count as one.
     if (this->next_pass_ && this->state_ == epaper_spi::EPaperState::DEEP_SLEEP) {
@@ -769,42 +768,86 @@ void CrowPanel579::loop() {
   }
 }
 
-// The base sleeps the controllers after every update. Here an active spell carries on instead,
-// the supplies on and the controllers awake, until ACTIVE_MS passes without another update.
+// The base sleeps the controllers after every update. Here the supplies stay on until ACTIVE_MS
+// passes without another update, so the next one skips switching them on, but no longer than
+// MAX_ACTIVE_MS at a stretch.
 void CrowPanel579::deep_sleep() {
-  if (this->update_pending_) {
-    this->update_pending_ = false;
-    this->defer([this]() { this->update(); });
+  if (this->supplies_on_ && millis() - this->supplies_since_ >= MAX_ACTIVE_MS) {
+    this->switch_supplies_off_();
+    this->set_timeout("sleep", CONTROLLER_IDLE_MS, [this]() { this->sleep_controllers_(); });
     return;
   }
   this->set_timeout("idle", ACTIVE_MS, [this]() { this->wind_down_(); });
 }
 
-// The end of an active spell: cancel any fast partials' pushes with a settling pass, which runs as
-// an update of its own, then switch the supplies off and sleep the controllers a while later.
+// Supplies off, and the controllers to sleep a while later. Fast partials' pushes stay recorded and
+// are cancelled by the next grey refresh, or settled before a deep sleep: a push left for a while
+// changes nothing, since what matters is each pixel's drive over its life, and the record keeps
+// that within one push.
 void CrowPanel579::wind_down_() {
   if (this->state_ != epaper_spi::EPaperState::IDLE)
     return;
-  if (this->unsettled_count_ != 0) {
-    ESP_LOGV(TAG, "Settling %u pixels", (unsigned) this->unsettled_count_);
-    this->settling_ = true;
-    this->settling_copy_ = true;
-    this->settle_saved_count_ = this->update_count_;
-    this->passes_[0] = Pass::SETTLE;
-    this->pass_count_ = 1;
-    this->pass_index_ = 0;
-    this->unchanged_ = false;
-    this->update_start_time_ = millis();
-    this->set_state_(epaper_spi::EPaperState::RESET);
-    this->enable_loop();
-    return;
-  }
   this->switch_supplies_off_();
   this->set_timeout("sleep", CONTROLLER_IDLE_MS, [this]() { this->sleep_controllers_(); });
 }
 
-// Settling straight away, waiting on BUSY, for a deep sleep that cannot wait for an update.
+// The panel has not finished an update in UPDATE_DEADLINE_MS: a loose ribbon or a failed
+// controller. Stop waiting, reset and sleep the controllers so the supplies are off and the
+// device can sleep, and start again from a full refresh.
+void CrowPanel579::give_up_() {
+  ESP_LOGE(TAG, "The panel did not finish an update in %u s; resetting it", (unsigned) (UPDATE_DEADLINE_MS / 1000));
+  this->status_set_warning();
+  this->reset_controllers_();
+  this->copying_ = false;
+  this->sending_ = false;
+  this->plane_ = 0;
+  this->pass_index_ = 0;
+  this->pass_started_ = false;
+  this->next_pass_ = false;
+  this->init_step_ = 0;
+  this->glass_valid_ = false;
+  glass_rows_valid = false;
+  if (this->unsettled_ != nullptr)
+    memset(this->unsettled_, 0, BIT_PLANE);
+  this->unsettled_count_ = 0;
+  this->update_count_ = 0;
+  this->set_state_(epaper_spi::EPaperState::IDLE);
+}
+
+// A hardware reset, which also switches the supplies off, then deep sleep.
+void CrowPanel579::reset_controllers_() {
+  this->cancel_timeout("idle");
+  this->cancel_timeout("sleep");
+  if (this->reset_pin_ != nullptr) {
+    this->reset_pin_->digital_write(false);
+    delay(2);
+    this->reset_pin_->digital_write(true);
+    delay(10);
+  }
+  this->awake_ = true;
+  this->supplies_on_ = false;
+  this->wait_idle_(100);
+  this->sleep_controllers_();
+}
+
+// Settling, waiting on BUSY, for a deep sleep that cannot wait for an update: only the pixels a
+// fast partial left a push out blink, and land where they were. The controllers may have gone to
+// sleep since, so they are woken as an update would wake them.
 void CrowPanel579::settle_now_() {
+  if (!this->awake_) {
+    if (this->reset_pin_ != nullptr) {
+      this->reset_pin_->digital_write(false);
+      delay(2);
+      this->reset_pin_->digital_write(true);
+      delay(10);
+    }
+    this->wait_idle_(100);
+    this->command(0x12);
+    this->wait_idle_(500);
+    this->cmd_data(0x18, {0x80});
+    this->awake_ = true;
+    this->supplies_on_ = false;
+  }
   this->find_unsettled_rows_();
   this->plane_ = 0;
   while (!this->send_planes_(Source{nullptr, this->unsettled_}, Source{nullptr, this->glass_})) {
@@ -831,6 +874,7 @@ void CrowPanel579::wait_idle_(uint32_t timeout_ms) {
 void CrowPanel579::switch_supplies_off_() {
   if (!this->supplies_on_)
     return;
+  ESP_LOGV(TAG, "Supplies off after %u s", (unsigned) ((millis() - this->supplies_since_) / 1000));
   this->cmd_data(0x22, {SUPPLIES_OFF});
   this->command(0x20);
   this->supplies_on_ = false;

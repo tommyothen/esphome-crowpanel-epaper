@@ -16,11 +16,12 @@ namespace esphome::crowpanel_579 {
  * EPaperBase runs the update as a state machine from loop(): BUSY is polled, never waited on,
  * and the data goes out in 10 ms slices, several to a loop() call. An update resets and
  * initialises the controllers unless the last one left them awake, sends the RAM planes, and
- * refreshes, leaving the ±15 V supplies on. Updates that follow within a few seconds make an
- * active spell: no reset, no supplies to switch on, and partial refreshes that push each changing
- * pixel one way only, twice as fast. Each such push is recorded, a bit a pixel, and cancelled
- * before the next grey refresh, when the spell ends, or before a deep sleep, so no pixel is ever
- * more than one push out of balance. Then the supplies go off, and later the controllers sleep.
+ * refreshes, leaving the ±15 V supplies on for a few seconds in case another update follows, and
+ * the controllers awake a while longer so the next skips their reset. Once the driver knows what
+ * the glass shows (after the first update since boot or a wake), partial refreshes push each
+ * changing pixel one way only, twice as fast as a balanced one. Each such push is recorded, a bit a
+ * pixel, and cancelled before the next grey refresh, or settled before a deep sleep, so no pixel is
+ * ever more than one push out of balance.
  *
  * The buffer holds 4 bits a pixel: a level from 0 (black) to 6 (white). With four greys only
  * the even levels are drawn. Each refresh picks one of four waveforms for every pixel from the
@@ -90,7 +91,6 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
     PARTIAL,        // balanced, from cold
     FAST,           // one way, in an active spell
     CORRECT,        // cancel the fast partials' pushes before a grey refresh
-    SETTLE,         // cancel them when no grey refresh follows
     BLACK_WHITE,    // the panel's own full refresh
     GREY,           // four greys
     HALF_TO_BLACK,  // seven greys: the half step, the even four, the half step back
@@ -118,8 +118,9 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   void find_unsettled_rows_();
   void plan_update_();
   void record_glass_(bool fast, bool corrected);
-  Source copy_source_() const;
   void wind_down_();
+  void give_up_();
+  void reset_controllers_();
   void settle_now_();
   void wait_idle_(uint32_t timeout_ms);
   void switch_supplies_off_();
@@ -137,13 +138,10 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   bool next_pass_{false};       // a pass has finished and loop() starts the next
   bool unchanged_{false};       // a partial update in which no row changed
   bool copying_{false};         // writing the black and white reading to both planes
-  bool reset_sent_{false};
+  uint8_t init_step_{0};
   bool awake_{false};           // the controllers have been reset and not slept since
-  bool supplies_on_{false};     // the ±15 V supplies are on: an active spell
-  bool settling_{false};        // the update running is the driver's own settling pass
-  bool settling_copy_{false};   // and the copy after it comes from the glass plane
-  bool update_pending_{false};  // an update asked for while settling
-  uint8_t settle_saved_count_{0};
+  bool supplies_on_{false};     // the ±15 V supplies are on
+  uint32_t supplies_since_{0};
   uint8_t plane_{0};            // 0 and 1: 0x26, left then right; 2 and 3: 0x24
   bool sending_{false};         // a plane is part way out
   uint16_t row_{0};             // the next row of it

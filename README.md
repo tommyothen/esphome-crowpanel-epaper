@@ -5,10 +5,9 @@ boards. `crowpanel_579` drives the 5.79", a 792x272 panel run by two SSD1683
 controllers in cascade. The 4.2" comes next.
 
 - Partial refreshes that drive only the pixels that change, so greys
-  elsewhere on the screen survive any number of them: about 0.9 s from cold,
-  and 0.48 s while updates keep coming, a dial turning say. They send only
-  the rows that changed, and when nothing did, the panel is not driven at
-  all.
+  elsewhere on the screen survive any number of them: about 0.9 s for the
+  first after a boot or a wake, then about 0.5 s. They send only the rows
+  that changed, and when nothing did, the panel is not driven at all.
 - Four greys in about 3.9 s: Waveshare's grey waveform with the particle
   shaking cut from five rounds to one, which saves 1.8 s and leaves the greys
   measuring the same. Or seven, in three passes and about 4.7 s.
@@ -105,18 +104,26 @@ one when they move.
 - The partial, grey and seven-grey waveforms give every pixel as many frames
   at +15 V as at -15 V on every refresh, with VCOM held at its DC level. A
   `static_assert` checks each table when the component compiles.
-- Fast partials are the exception, on purpose. An update that comes within
-  five seconds of the last finds the ±15 V supplies still on and starts an
-  active spell: it skips switching them on (0.1 s) and pushes each changing
-  pixel one way only, 15 frames instead of 15 each way. The driver keeps a
-  bit a pixel for "pushed, not yet cancelled"; each fast change flips it, so
-  no pixel is ever more than one push out. Before a grey refresh, a 15-frame
-  push back cancels them, hidden by the grey's flash. When five seconds pass
-  with no update, or before a deep sleep, a settling pass does it instead:
-  only those pixels blink, 40 frames over and 25 back, and land where they
-  were. Then the supplies go off, and ten seconds later the controllers
-  sleep. Outside a spell nothing is out of balance, so a device that wakes,
-  draws once and sleeps runs exactly as before.
+- Fast partials are the exception, on purpose. Once the driver knows what
+  the glass shows, which is from the first update after a boot or a wake,
+  a partial pushes each changing pixel one way only: 15 frames instead of
+  15 each way. The driver keeps a bit a pixel for "pushed, not yet
+  cancelled"; each fast change flips it, so no pixel is ever more than one
+  push out, however long the device runs. Before a grey refresh, a 15-frame
+  push back cancels them, hidden by the grey's flash. Before a deep sleep,
+  which would lose the record, a settling pass does it: only those pixels
+  blink, 40 frames over and 25 back, and land where they were. A device
+  that wakes, draws once and sleeps never makes a fast partial, so it runs
+  exactly as before.
+- The ±15 V supplies stay on for five seconds after an update, so the next
+  skips switching them on (0.1 s), but for no more than a minute at a
+  stretch however often updates come. The controllers sleep ten seconds
+  after the supplies go off.
+- An update the panel has not finished in 20 s has failed, a loose ribbon
+  or a dead controller say: the driver resets the controllers, which
+  switches the supplies off, and starts again from a full refresh, so the
+  device can still sleep. On any boot that is not a wake from deep sleep, it
+  resets them too, in case a reboot caught them with the supplies on.
 - After each refresh the controllers discharge the pixels (end option 0x22)
   and go into deep sleep, so nothing stays driven between updates.
 - The panel's own full refresh, used when `grey` is off, is its OTP waveform:
@@ -263,6 +270,15 @@ community drivers listed below, and testing on the board.
   where it was, so it pushes past the far colour and comes back. Measured
   against flat frames: 30 frames over and 15 back left whites at 0.96, 40
   and 25 at 1.02, 45 and 30 at 1.03.
+- **VCOM.** Every loaded waveform sets VCOM, the offset that cancels the
+  TFTs' kickback; if it is off for a panel, every frame of every refresh
+  leaves a little drive on every pixel, always the same way. A test: three
+  minutes of frames driving nothing over a grey frame, so only VCOM acts. At
+  anything from 0x20 to Waveshare's 0x30 the greys drifted no more than the
+  ink settles with no frames at all (light grey -0.02). The panel's own OTP
+  value, loaded with 0x22 0xB9, lightened dark grey by 0.06 and every grey by
+  about 0.1, so the driver keeps 0x30. The booster's soft start (0x0C) is left
+  at its reset value, as Elecrow's firmware leaves it.
 - **Read back.** The controllers can report their temperature, RAM and display
   options, but only over the data line, which the board wires to one GPIO as
   an output. Reading would mean bit-banging it.
