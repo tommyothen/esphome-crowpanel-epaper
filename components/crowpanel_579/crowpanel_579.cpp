@@ -1,5 +1,6 @@
 #include "crowpanel_579.h"
 
+#include <algorithm>
 #include <cstring>
 #include <initializer_list>
 
@@ -7,6 +8,7 @@
 #include <esp_sleep.h>
 
 #include "esphome/core/hal.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
 namespace esphome::crowpanel_579 {
@@ -18,13 +20,19 @@ static constexpr uint8_t LEFT = 0x80;
 static constexpr uint8_t LAST_X = 0x31;  // the 50th byte of a controller's RAM row
 // How long one loop() call may run the update's steps back to back, well inside ESPHome's 50 ms.
 static constexpr uint32_t STEP_BUDGET_MS = 25;
-// How long the controllers stay awake after an update, so the next one skips their reset.
+// An active spell lasts until this long passes without an update; then the supplies go off, and
+// after CONTROLLER_IDLE_MS more the controllers sleep, so an update in between skips their reset.
+static constexpr uint32_t ACTIVE_MS = 5000;
 static constexpr uint32_t CONTROLLER_IDLE_MS = 10000;
 
-// Display update control (0x22) sequences. The full one reads the panel's temperature sensor and
-// loads the matching OTP waveform first; the partial and grey ones run a waveform loaded with 0x32.
+// Display update control (0x22) sequences. The full one switches the supplies on, reads the
+// panel's temperature sensor, loads the matching OTP waveform, runs it and switches them off. The
+// others run a waveform loaded with 0x32, switching the supplies on first if they are off and
+// leaving them on; switching them on or off takes about 0.1 s each.
 static constexpr uint8_t UPDATE_FULL = 0xF7;
-static constexpr uint8_t UPDATE_LOADED = 0xCF;
+static constexpr uint8_t UPDATE_SUPPLIES_DISPLAY = 0xCC;
+static constexpr uint8_t UPDATE_DISPLAY = 0x0C;
+static constexpr uint8_t SUPPLIES_OFF = 0x03;
 // Border waveform (0x3C): white on a full refresh, left alone on a partial one, and the
 // loaded waveform's on a grey one.
 static constexpr uint8_t BORDER_FULL = 0x01;
@@ -153,6 +161,40 @@ struct HalfStepWaveform {
 };
 static constexpr HalfStepWaveform HALF_TO_BLACK{false}, HALF_TO_WHITE{true};
 
+// The waveforms of an active spell, while updates come quickly: group 0 only, with phases A to C
+// of the given lengths and, for each table, the level in each phase (0 none, 1 VSH1, black,
+// 2 VSL, white), and the grey waveform's frame rate and voltages.
+struct SimpleWaveform {
+  uint8_t bytes[233];
+  constexpr SimpleWaveform(const uint8_t (&lengths)[3], const uint8_t (&levels)[5][3]) : bytes() {
+    for (int t = 0; t < 5; t++) {
+      bytes[t * 42] = 1;
+      for (int p = 0; p < 3; p++)
+        bytes[t * 42 + 1 + p] = levels[t][p] << 6 | lengths[p];
+      bytes[t * 42 + 5] = 1;
+      bytes[t * 42 + 6] = 1;
+    }
+    bytes[224] = GREY_LUT[224];
+    for (int i = 227; i < 233; i++)
+      bytes[i] = GREY_LUT[i];
+  }
+};
+static constexpr uint8_t FAST_FRAMES = 15;
+static constexpr uint8_t TABLE_WW = 1, TABLE_BW = 2, TABLE_WB = 3, TABLE_BB = 4;
+// A fast partial pushes a changing pixel one way only, as the panel's own partial does: 15 frames
+// towards its new colour, half the balanced partial's 30. Each one leaves its pixel a push out of
+// balance, which the driver records and later cancels.
+static constexpr SimpleWaveform ONE_WAY{{FAST_FRAMES, 0, 0}, {{0}, {0}, {1}, {2}, {0}}};
+// Cancelling, with 0x26 saying which pixels are out of balance and 0x24 what the glass shows: a
+// push back the other way. It runs just before a grey refresh, whose flash hides it.
+static constexpr SimpleWaveform CORRECTION{{FAST_FRAMES, 0, 0}, {{0}, {1}, {2}, {0}, {0}}};
+// The same cancelling when no grey refresh follows: a push back long enough to take the pixel all
+// the way over, then 25 frames of its own colour, so it ends where it was, having blinked. 40
+// frames against 25 is the one push it cancels; 30 against 15 left whites at 0.96 on the camera.
+static constexpr uint8_t SETTLE_RETURN = 25;
+static constexpr SimpleWaveform SETTLE{
+    {FAST_FRAMES + SETTLE_RETURN, SETTLE_RETURN, 0}, {{0}, {1, 2}, {2, 1}, {0}, {0}}};
+
 // The net drive a waveform leaves on pixels using table t, in frames: VSH1 counts one way and VSL
 // the other, with the group and state repeats. Returns a value far from 0 for anything this driver
 // should never send: VSH2, a VCOM table that leaves its DC level, or VSH1 and VSL other than
@@ -193,12 +235,27 @@ static_assert(balanced({GREY_LUT}), "the grey waveform must leave no net drive o
 static_assert(balanced({EVEN_GREY.bytes}), "the even grey waveform must leave no net drive on a pixel");
 static_assert(balanced({HALF_TO_BLACK.bytes, HALF_TO_WHITE.bytes}), "the half steps must cancel");
 
+// A white pixel out of balance got there by a fast partial's push towards white (WB), a black one
+// by its push towards black (BW); cancelling and settling must undo exactly that, and touch
+// nothing else.
+static constexpr bool cancels(const uint8_t *waveform) {
+  return net_drive(waveform, TABLE_WW) + net_drive(ONE_WAY.bytes, TABLE_WB) == 0 &&
+         net_drive(waveform, TABLE_BW) + net_drive(ONE_WAY.bytes, TABLE_BW) == 0 &&
+         net_drive(waveform, TABLE_WB) == 0 && net_drive(waveform, TABLE_BB) == 0 && net_drive(waveform, 0) == 0;
+}
+static_assert(net_drive(ONE_WAY.bytes, TABLE_BW) == FAST_FRAMES && net_drive(ONE_WAY.bytes, TABLE_WB) == -FAST_FRAMES &&
+                  net_drive(ONE_WAY.bytes, TABLE_WW) == 0 && net_drive(ONE_WAY.bytes, TABLE_BB) == 0,
+              "a fast partial pushes only the pixels that change, one push each");
+static_assert(cancels(CORRECTION.bytes), "cancelling must undo a fast partial's push exactly");
+static_assert(cancels(SETTLE.bytes), "settling must undo a fast partial's push exactly");
+
+
 // For each RAM bit a refresh needs, the levels (0 to 6) that set it, and from that a table from a
 // buffer byte, two pixels with the first in the high nibble, to their two bits.
-static constexpr uint8_t WHITE = 0b1110000;       // levels 4 to 6: a partial's reading, and level / 2's high bit
-static constexpr uint8_t GREY_LOW = 0b1001100;    // levels 2, 3 and 6: level / 2's low bit
-static constexpr uint8_t HALF_HIGH = 0b0101000;   // levels 3 and 5: the half step's high bit
-static constexpr uint8_t HALF_LOW = 0b0100010;    // levels 1 and 5: the half step's low bit
+static constexpr uint8_t WHITE = 0b1110000;      // levels 4 to 6: a partial's reading, and level / 2's high bit
+static constexpr uint8_t GREY_LOW = 0b1001100;   // levels 2, 3 and 6: level / 2's low bit
+static constexpr uint8_t HALF_HIGH = 0b0101000;  // levels 3 and 5: the half step's high bit
+static constexpr uint8_t HALF_LOW = 0b0100010;   // levels 1 and 5: the half step's low bit
 struct PlaneBits {
   uint8_t table[256];
   constexpr PlaneBits(uint8_t levels) : table() {
@@ -208,6 +265,7 @@ struct PlaneBits {
 };
 static constexpr PlaneBits WHITE_BITS{WHITE}, GREY_LOW_BITS{GREY_LOW}, HALF_HIGH_BITS{HALF_HIGH},
     HALF_LOW_BITS{HALF_LOW};
+static constexpr CrowPanel579::Source WHITE_SOURCE{WHITE_BITS.table, nullptr};
 
 // Where the last update left the full_update_every count, kept through deep sleep so the count
 // carries on across wakes. Only read on a wake from deep sleep, so it is always one this
@@ -241,6 +299,14 @@ void CrowPanel579::setup() {
   size_t length = 0;
   uint8_t *pixels = this->buffer_.get_span(0, length);
   this->pixels_ = length == this->buffer_length_ ? pixels : nullptr;
+  // What the glass shows and which pixels are out of balance, a bit a pixel each. Without them
+  // there are no fast partials.
+  RAMAllocator<uint8_t> allocator;
+  this->glass_ = allocator.allocate(2 * BIT_PLANE);
+  if (this->glass_ != nullptr) {
+    this->unsettled_ = this->glass_ + BIT_PLANE;
+    memset(this->unsettled_, 0, BIT_PLANE);
+  }
   // Waking from deep sleep, the panel kept its power, its picture and its RAM, so the count
   // carries on and the first update can be partial. Anything else starts from nothing.
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED)
@@ -252,17 +318,28 @@ void CrowPanel579::setup() {
   }
 }
 
-// Before a deep sleep: finish writing the planes if a refresh has just run, then sleep the
-// controllers and hold the panel's power and reset pins high so it keeps its RAM.
+// Before a deep sleep: finish writing the planes if a refresh has just run, cancel any fast
+// partials' pushes, then sleep the controllers and hold the panel's power and reset pins high so
+// it keeps its RAM.
 void CrowPanel579::on_safe_shutdown() {
-  while (this->copying_ && !this->send_planes_(WHITE_BITS.table, WHITE_BITS.table)) {
+  this->cancel_timeout("idle");
+  this->cancel_timeout("sleep");
+  while (this->copying_ && !this->send_planes_(this->copy_source_(), this->copy_source_())) {
   }
   this->copying_ = false;
-  // An update cut short, a seven-grey one between passes included, may leave the panel's RAM out
-  // of step with the glass, so the next wake starts with a full refresh.
   using epaper_spi::EPaperState;
   const bool settled =
       !this->next_pass_ && (this->state_ == EPaperState::IDLE || this->state_ == EPaperState::DEEP_SLEEP);
+  if (this->unsettled_count_ != 0) {
+    if (settled) {
+      this->settle_now_();
+    } else {
+      ESP_LOGW(TAG, "Sleeping part way through an update; %u pixels stay a push out of balance",
+               (unsigned) this->unsettled_count_);
+    }
+  }
+  // An update cut short, a seven-grey one between passes included, may leave the panel's RAM out
+  // of step with the glass, so the next wake starts with a full refresh.
   slept_update_count = settled ? this->update_count_ : 0;
   glass_rows_valid = glass_rows_valid && settled;
   this->sleep_controllers_();
@@ -305,8 +382,14 @@ void HOT CrowPanel579::draw_pixel_at(int x, int y, Color color) {
   pair = (x & 1) ? (pair & 0xF0) | level : (pair & 0x0F) | level << 4;  // the first pixel in the high nibble
 }
 
+// An update cancels the wind-down. One asked for while the driver is settling waits for it.
 void CrowPanel579::update() {
+  this->cancel_timeout("idle");
   this->cancel_timeout("sleep");
+  if (this->state_ != epaper_spi::EPaperState::IDLE) {
+    this->update_pending_ = true;
+    return;
+  }
   EPaperBase::update();
 }
 
@@ -324,10 +407,10 @@ bool CrowPanel579::reset() {
 // A software reset, then the internal temperature sensor; the refresh loads its own waveform.
 // The reset sets the controllers working, so BUSY is polled again after it.
 bool CrowPanel579::initialise(bool partial) {
-  if (this->awake_)
-    return true;
   if (!this->is_idle_())
     return false;
+  if (this->awake_)
+    return true;
   if (!this->reset_sent_) {
     this->command(0x12);
     this->reset_sent_ = true;
@@ -337,6 +420,7 @@ bool CrowPanel579::initialise(bool partial) {
   this->cmd_data(0x18, {0x80});
   this->reset_sent_ = false;
   this->awake_ = true;
+  this->supplies_on_ = false;
   return true;
 }
 
@@ -355,26 +439,33 @@ void CrowPanel579::set_ram_area_(bool left, uint16_t first_y, uint16_t end_y) {
   this->cmd_data(0x4F | to, {static_cast<uint8_t>(first_y & 0xFF), static_cast<uint8_t>(first_y >> 8)});
 }
 
-void HOT CrowPanel579::plane_half_(size_t y, size_t offset, const uint8_t *bits, uint8_t *out) {
+// Plane bytes offset to offset + count of row y: from the buffer through a table, or from a bit
+// plane as they are. Plane byte j holds pixels 8j to 8j + 7, the first in the top bit.
+void HOT CrowPanel579::plane_bytes_(const Source &source, size_t y, size_t offset, size_t count, uint8_t *out) {
+  if (source.plane != nullptr) {
+    memcpy(out, source.plane + y * PLANE_ROW + offset, count);
+    return;
+  }
   // Plane byte offset + i holds the 8 pixels of buffer bytes 4 (offset + i) to the third after.
   const size_t start = y * this->row_width_ + 4 * offset;
-  uint8_t copy[4 * HALF];
+  uint8_t copy[4 * PLANE_ROW];
   const uint8_t *in = this->pixels_ + start;
   if (this->pixels_ == nullptr) {
-    for (size_t i = 0; i != sizeof copy; i++)
+    for (size_t i = 0; i != 4 * count; i++)
       copy[i] = this->buffer_[start + i];
     in = copy;
   }
-  for (size_t i = 0; i != HALF; i++, in += 4)
+  const uint8_t *bits = source.table;
+  for (size_t i = 0; i != count; i++, in += 4)
     out[i] = bits[in[0]] << 6 | bits[in[1]] << 4 | bits[in[2]] << 2 | bits[in[3]];
 }
 
 // Sends planes plane_ to 3 for rows first_row_ to end_row_, a 10 ms slice at a time: 0x26 then
-// 0x24, each for the left half then the right, through old_bits and new_bits. Returns true once
-// the last is out.
-bool HOT CrowPanel579::send_planes_(const uint8_t *old_bits, const uint8_t *new_bits) {
+// 0x24, each for the left half then the right. Rows go out ROWS_A_WRITE at a time, since each
+// SPI write costs more than the bytes in it. Returns true once the last is out.
+bool HOT CrowPanel579::send_planes_(const Source &old_source, const Source &new_source) {
   const uint32_t start = millis();
-  uint8_t data[HALF];
+  uint8_t data[ROWS_A_WRITE * HALF];
   while (this->plane_ != 4) {
     const bool left = (this->plane_ & 1) == 0;
     const bool new_plane = this->plane_ >= 2;
@@ -385,11 +476,14 @@ bool HOT CrowPanel579::send_planes_(const uint8_t *old_bits, const uint8_t *new_
       this->sending_ = true;
     }
     const size_t offset = left ? 0 : RIGHT_OFFSET;
+    const Source &source = new_plane ? new_source : old_source;
     this->start_data_();
     while (this->row_ != this->end_row_) {
-      this->plane_half_(this->row_, offset, new_plane ? new_bits : old_bits, data);
-      this->write_array(data, HALF);
-      ++this->row_;
+      const size_t rows = std::min<size_t>(ROWS_A_WRITE, this->end_row_ - this->row_);
+      for (size_t r = 0; r != rows; r++)
+        this->plane_bytes_(source, this->row_ + r, offset, HALF, data + r * HALF);
+      this->write_array(data, rows * HALF);
+      this->row_ += rows;
       if (this->row_ != this->end_row_ && millis() - start > epaper_spi::MAX_TRANSFER_TIME) {
         this->disable();
         return false;
@@ -403,15 +497,11 @@ bool HOT CrowPanel579::send_planes_(const uint8_t *old_bits, const uint8_t *new_
   return true;
 }
 
-// FNV-1a over a row's black and white reading, both halves as the controllers take them.
-uint32_t CrowPanel579::row_hash_(size_t y) {
-  uint8_t data[HALF];
+// FNV-1a over a row's black and white reading.
+static uint32_t row_hash(const uint8_t *row) {
   uint32_t hash = 2166136261u;
-  for (const size_t offset : {size_t{0}, RIGHT_OFFSET}) {
-    this->plane_half_(y, offset, WHITE_BITS.table, data);
-    for (const uint8_t byte : data)
-      hash = (hash ^ byte) * 16777619u;
-  }
+  for (size_t i = 0; i != CrowPanel579::PLANE_ROW; i++)
+    hash = (hash ^ row[i]) * 16777619u;
   return hash;
 }
 
@@ -419,9 +509,10 @@ uint32_t CrowPanel579::row_hash_(size_t y) {
 // Returns false when there are none.
 bool CrowPanel579::find_changed_rows_() {
   int first = -1, last = -1;
+  uint8_t row[PLANE_ROW];
   for (size_t y = 0; y != HEIGHT; y++) {
-    this->new_rows_[y] = this->row_hash_(y);
-    if (!glass_rows_valid || this->new_rows_[y] != glass_rows[y]) {
+    this->plane_bytes_(WHITE_SOURCE, y, 0, PLANE_ROW, row);
+    if (!glass_rows_valid || row_hash(row) != glass_rows[y]) {
       if (first < 0)
         first = y;
       last = y;
@@ -431,41 +522,92 @@ bool CrowPanel579::find_changed_rows_() {
     return false;
   this->first_row_ = first;
   this->end_row_ = last + 1;
-  ESP_LOGV(TAG, "Partial refresh of rows %d to %d", first, last);
   return true;
 }
 
-// The first call of an update decides what kind it is. A partial refresh sends only 0x24, the new
-// frame, and only the rows that changed: 0x26, and 0x24 everywhere else, already hold what is on
-// the glass. When no row changed there is nothing to send or refresh. Every other refresh sends
-// both planes whole.
-bool CrowPanel579::transfer_data() {
-  if (this->plane_ == 0 && !this->sending_ && this->grey_pass_ == 0) {
-    this->first_row_ = 0;
-    this->end_row_ = HEIGHT;
-    this->unchanged_ = false;
-    if (this->update_count_ != 0) {
-      this->kind_ = Kind::PARTIAL;
-      if (!this->find_changed_rows_()) {
-        this->unchanged_ = true;
-        return true;
+// The band of rows holding a pixel out of balance.
+void CrowPanel579::find_unsettled_rows_() {
+  int first = -1, last = -1;
+  for (size_t y = 0; y != HEIGHT; y++) {
+    const uint8_t *row = this->unsettled_ + y * PLANE_ROW;
+    for (size_t i = 0; i != PLANE_ROW; i++) {
+      if (row[i] != 0) {
+        if (first < 0)
+          first = y;
+        last = y;
+        break;
       }
-      this->plane_ = 2;
-    } else {
-      this->kind_ = !this->grey_ ? Kind::BLACK_WHITE : this->seven_ ? Kind::SEVEN_GREYS : Kind::GREY;
     }
-    glass_rows_valid = false;  // until this update has finished
   }
-  switch (this->kind_) {
-    case Kind::PARTIAL:
-    case Kind::BLACK_WHITE:
-      return this->send_planes_(WHITE_BITS.table, WHITE_BITS.table);
-    case Kind::GREY:
-      return this->send_planes_(WHITE_BITS.table, GREY_LOW_BITS.table);
-    case Kind::SEVEN_GREYS:
-      if (this->grey_pass_ == 1)
-        return this->send_planes_(WHITE_BITS.table, GREY_LOW_BITS.table);
-      return this->send_planes_(HALF_HIGH_BITS.table, HALF_LOW_BITS.table);
+  this->first_row_ = first < 0 ? 0 : first;
+  this->end_row_ = first < 0 ? 1 : last + 1;
+}
+
+// Decides what an update is, at its first transfer: a partial refresh when the count says so,
+// fast when an active spell keeps the supplies on, or a full refresh, after cancelling any fast
+// partials' pushes. A partial whose rows are all unchanged has nothing to send or refresh.
+void CrowPanel579::plan_update_() {
+  this->pass_count_ = 0;
+  this->unchanged_ = false;
+  if (this->update_count_ != 0) {
+    if (!this->find_changed_rows_()) {
+      this->unchanged_ = true;
+      return;
+    }
+    const bool fast = this->supplies_on_ && this->glass_valid_;
+    this->passes_[this->pass_count_++] = fast ? Pass::FAST : Pass::PARTIAL;
+    ESP_LOGV(TAG, "%s refresh of rows %u to %u", fast ? "Fast partial" : "Partial", (unsigned) this->first_row_,
+             (unsigned) this->end_row_ - 1);
+  } else {
+    if (this->unsettled_count_ != 0)
+      this->passes_[this->pass_count_++] = Pass::CORRECT;
+    if (!this->grey_) {
+      this->passes_[this->pass_count_++] = Pass::BLACK_WHITE;
+    } else if (!this->seven_) {
+      this->passes_[this->pass_count_++] = Pass::GREY;
+    } else {
+      this->passes_[this->pass_count_++] = Pass::HALF_TO_BLACK;
+      this->passes_[this->pass_count_++] = Pass::EVEN_GREY;
+      this->passes_[this->pass_count_++] = Pass::HALF_TO_WHITE;
+    }
+  }
+  glass_rows_valid = false;  // until this update has finished
+}
+
+// Sends the current pass's planes. A partial sends only 0x24, the new frame, and only the rows
+// that changed: 0x26, and 0x24 everywhere else, already hold what is on the glass. Cancelling
+// and settling send which pixels are out of balance (0x26) and what the glass shows (0x24) for the
+// rows that have any. Every other pass sends both planes whole.
+bool CrowPanel579::transfer_data() {
+  if (!this->pass_started_) {
+    if (this->pass_index_ == 0 && !this->settling_)
+      this->plan_update_();
+    if (this->unchanged_)
+      return true;
+    this->pass_started_ = true;
+    const Pass pass = this->passes_[this->pass_index_];
+    if (pass == Pass::CORRECT || pass == Pass::SETTLE) {
+      this->find_unsettled_rows_();
+    } else if (pass != Pass::FAST && pass != Pass::PARTIAL) {
+      this->first_row_ = 0;
+      this->end_row_ = HEIGHT;
+    }
+    this->plane_ = pass == Pass::FAST || pass == Pass::PARTIAL ? 2 : 0;
+  }
+  switch (this->passes_[this->pass_index_]) {
+    case Pass::FAST:
+    case Pass::PARTIAL:
+    case Pass::BLACK_WHITE:
+      return this->send_planes_(WHITE_SOURCE, WHITE_SOURCE);
+    case Pass::GREY:
+    case Pass::EVEN_GREY:
+      return this->send_planes_(WHITE_SOURCE, Source{GREY_LOW_BITS.table, nullptr});
+    case Pass::HALF_TO_BLACK:
+    case Pass::HALF_TO_WHITE:
+      return this->send_planes_(Source{HALF_HIGH_BITS.table, nullptr}, Source{HALF_LOW_BITS.table, nullptr});
+    case Pass::CORRECT:
+    case Pass::SETTLE:
+      return this->send_planes_(Source{nullptr, this->unsettled_}, Source{nullptr, this->glass_});
   }
   return true;
 }
@@ -477,60 +619,127 @@ void CrowPanel579::refresh_screen(bool partial) {
     ESP_LOGV(TAG, "Nothing changed; no refresh");
     return;
   }
-  switch (this->kind_) {
-    case Kind::PARTIAL:
-      ESP_LOGV(TAG, "Partial refresh");
-      this->cmd_data(0x3C, {BORDER_PARTIAL});
-      this->cmd_data(0x21, {0x00, 0x10});
+  const Pass pass = this->passes_[this->pass_index_];
+  if (pass == Pass::BLACK_WHITE) {
+    ESP_LOGV(TAG, "Full refresh");
+    this->cmd_data(0x3C, {BORDER_FULL});
+    this->cmd_data(0x22, {UPDATE_FULL});
+    this->command(0x20);
+    this->supplies_on_ = false;  // the panel's own sequence switches them off
+    return;
+  }
+  const bool grey = pass == Pass::GREY || pass == Pass::EVEN_GREY;
+  this->cmd_data(0x3C, {grey ? BORDER_GREY : BORDER_PARTIAL});
+  this->cmd_data(0x21, {0x00, 0x10});
+  switch (pass) {
+    case Pass::FAST:
+      this->load_waveform_(ONE_WAY.bytes);
+      break;
+    case Pass::PARTIAL:
       this->load_waveform_(PARTIAL.bytes);
       break;
-    case Kind::GREY:
-      ESP_LOGV(TAG, "Grey refresh");
-      this->cmd_data(0x3C, {BORDER_GREY});
-      this->cmd_data(0x21, {0x00, 0x10});
+    case Pass::GREY:
       this->load_waveform_(GREY_LUT);
       break;
-    case Kind::SEVEN_GREYS:
-      ESP_LOGV(TAG, "Seven-grey refresh, pass %u", (unsigned) this->grey_pass_ + 1);
-      this->cmd_data(0x3C, {this->grey_pass_ == 1 ? BORDER_GREY : BORDER_PARTIAL});
-      this->cmd_data(0x21, {0x00, 0x10});
-      this->load_waveform_(this->grey_pass_ == 0   ? HALF_TO_BLACK.bytes
-                           : this->grey_pass_ == 1 ? EVEN_GREY.bytes
-                                                   : HALF_TO_WHITE.bytes);
+    case Pass::HALF_TO_BLACK:
+      this->load_waveform_(HALF_TO_BLACK.bytes);
       break;
-    case Kind::BLACK_WHITE:
-      ESP_LOGV(TAG, "Full refresh");
-      this->cmd_data(0x3C, {BORDER_FULL});
-      this->cmd_data(0x22, {UPDATE_FULL});
+    case Pass::EVEN_GREY:
+      this->load_waveform_(EVEN_GREY.bytes);
+      break;
+    case Pass::HALF_TO_WHITE:
+      this->load_waveform_(HALF_TO_WHITE.bytes);
+      break;
+    case Pass::CORRECT:
+      this->load_waveform_(CORRECTION.bytes);
+      break;
+    case Pass::SETTLE:
+      this->load_waveform_(SETTLE.bytes);
+      break;
+    case Pass::BLACK_WHITE:
       break;
   }
   this->command(0x20);
 }
 
-// Runs once a refresh has finished. A seven-grey refresh has passes left: loop() starts the next.
-// After the last, the frame's black and white reading goes to both planes for the next partial
-// to compare with; the base moves straight on to sleeping the controllers, so loop() writes them
-// first, in slices. Both planes, as GxEPD2's writeImageAgain does, because a refresh with a loaded
-// waveform swaps the banks 0x24 and 0x26 address until the next reset (RAM ping-pong, 0x37): with
-// both holding the same frame, the next partial is right with or without a reset in between.
-// The panel's own black and white refresh writes both planes before it and does not swap.
+// Loads a waveform and runs it without the OTP's temperature lookup and waveform, leaving the
+// supplies on afterwards for whatever comes next.
+void CrowPanel579::load_waveform_(const uint8_t *waveform) {
+  this->cmd_data(0x0C, {0x8B, 0x9C, 0xA4, 0x0F});  // booster soft start, as Waveshare sets it
+  this->cmd_data(0x32, waveform, 227);
+  this->cmd_data(0x3F, {waveform[227]});
+  this->cmd_data(0x03, {waveform[228]});
+  this->cmd_data(0x04, {waveform[229], waveform[230], waveform[231]});
+  this->cmd_data(0x2C, {waveform[232]});
+  this->cmd_data(0x22, {this->supplies_on_ ? UPDATE_DISPLAY : UPDATE_SUPPLIES_DISPLAY});
+  this->supplies_on_ = true;
+}
+
+// Runs once a pass has finished. With passes left, loop() starts the next. After the last, the
+// glass's reading is brought up to date, fast partials' pushes are recorded or cleared, and the
+// reading goes to both planes for the next partial to compare with; the base moves straight on to
+// sleeping the controllers, so loop() writes them first, in slices. Both planes, as GxEPD2's
+// writeImageAgain does, because a refresh with a loaded waveform swaps the banks 0x24 and 0x26
+// address until the next reset (RAM ping-pong, 0x37): with both holding the same frame, the next
+// partial is right with or without a reset in between. The panel's own black and white refresh
+// writes both planes before it and does not swap.
 void CrowPanel579::power_off() {
-  if (this->kind_ == Kind::SEVEN_GREYS && this->grey_pass_ < 2) {
-    this->grey_pass_++;
+  this->pass_started_ = false;
+  if (this->pass_index_ + 1 < this->pass_count_) {
+    this->pass_index_++;
     this->next_pass_ = true;
     return;
   }
-  this->grey_pass_ = 0;
+  const Pass last = this->passes_[this->pass_index_];
+  this->pass_index_ = 0;
+  if (this->settling_) {
+    this->settling_ = false;
+    this->update_count_ = this->settle_saved_count_;
+    memset(this->unsettled_, 0, BIT_PLANE);
+    this->unsettled_count_ = 0;
+    this->copying_ = true;
+    return;
+  }
   if (this->unchanged_)
     return;
-  if (this->kind_ == Kind::PARTIAL) {
-    memcpy(glass_rows, this->new_rows_, sizeof glass_rows);
-  } else {
-    for (size_t y = 0; y != HEIGHT; y++)
-      glass_rows[y] = this->row_hash_(y);
+  this->record_glass_(last == Pass::FAST, this->passes_[0] == Pass::CORRECT);
+  this->copying_ = last != Pass::BLACK_WHITE;
+}
+
+// The new frame's black and white reading becomes the glass's, row by row: its hash for the next
+// partial, and with the bit planes, which pixels a fast partial has pushed out of balance (each
+// change flips its pixel) or that cancelling has put right.
+void CrowPanel579::record_glass_(bool fast, bool corrected) {
+  uint8_t row[PLANE_ROW];
+  for (size_t y = 0; y != HEIGHT; y++) {
+    this->plane_bytes_(WHITE_SOURCE, y, 0, PLANE_ROW, row);
+    glass_rows[y] = row_hash(row);
+    if (this->glass_ == nullptr)
+      continue;
+    uint8_t *glass = this->glass_ + y * PLANE_ROW;
+    uint8_t *unsettled = this->unsettled_ + y * PLANE_ROW;
+    for (size_t i = 0; i != PLANE_ROW; i++) {
+      if (corrected)
+        unsettled[i] = 0;
+      if (fast)
+        unsettled[i] ^= glass[i] ^ row[i];
+      glass[i] = row[i];
+    }
   }
   glass_rows_valid = true;
-  this->copying_ = this->kind_ != Kind::BLACK_WHITE;
+  this->glass_valid_ = this->glass_ != nullptr;
+  this->unsettled_count_ = 0;
+  if (this->glass_ != nullptr) {
+    for (size_t i = 0; i != BIT_PLANE; i++)
+      this->unsettled_count_ += __builtin_popcount(this->unsettled_[i]);
+  }
+  if (this->unsettled_count_ != 0)
+    ESP_LOGV(TAG, "%u pixels a push out of balance", (unsigned) this->unsettled_count_);
+}
+
+// What the planes get after a refresh: the frame just drawn, or for settling, the glass as it was.
+CrowPanel579::Source CrowPanel579::copy_source_() const {
+  return this->settling_copy_ ? Source{nullptr, this->glass_} : WHITE_SOURCE;
 }
 
 // The base runs one step of the update a loop() call, and ESPHome calls loop() about every 16 ms,
@@ -540,12 +749,12 @@ void CrowPanel579::loop() {
   const uint32_t start = millis();
   while (millis() - start < STEP_BUDGET_MS) {
     if (this->copying_) {
-      if (!this->send_planes_(WHITE_BITS.table, WHITE_BITS.table))
+      if (!this->send_planes_(this->copy_source_(), this->copy_source_()))
         continue;
       this->copying_ = false;
+      this->settling_copy_ = false;
     }
-    // Each pass of a seven-grey refresh is a full update to the base, and the count goes back so
-    // the three count as one.
+    // Each pass is a full update to the base, and the count goes back so they count as one.
     if (this->next_pass_ && this->state_ == epaper_spi::EPaperState::DEEP_SLEEP) {
       this->next_pass_ = false;
       this->update_count_ = 0;
@@ -560,26 +769,81 @@ void CrowPanel579::loop() {
   }
 }
 
-// Loads a waveform and runs it: 0x22 0xCF skips the OTP's temperature lookup and waveform.
-void CrowPanel579::load_waveform_(const uint8_t *waveform) {
-  this->cmd_data(0x0C, {0x8B, 0x9C, 0xA4, 0x0F});  // booster soft start, as Waveshare sets it
-  this->cmd_data(0x32, waveform, 227);
-  this->cmd_data(0x3F, {waveform[227]});
-  this->cmd_data(0x03, {waveform[228]});
-  this->cmd_data(0x04, {waveform[229], waveform[230], waveform[231]});
-  this->cmd_data(0x2C, {waveform[232]});
-  this->cmd_data(0x22, {UPDATE_LOADED});
+// The base sleeps the controllers after every update. Here an active spell carries on instead,
+// the supplies on and the controllers awake, until ACTIVE_MS passes without another update.
+void CrowPanel579::deep_sleep() {
+  if (this->update_pending_) {
+    this->update_pending_ = false;
+    this->defer([this]() { this->update(); });
+    return;
+  }
+  this->set_timeout("idle", ACTIVE_MS, [this]() { this->wind_down_(); });
 }
 
-// The base sleeps the controllers after every update; here they stay awake for a while, so a quick
-// run of updates, a dial turning, skips the reset and initialisation each time.
-void CrowPanel579::deep_sleep() {
+// The end of an active spell: cancel any fast partials' pushes with a settling pass, which runs as
+// an update of its own, then switch the supplies off and sleep the controllers a while later.
+void CrowPanel579::wind_down_() {
+  if (this->state_ != epaper_spi::EPaperState::IDLE)
+    return;
+  if (this->unsettled_count_ != 0) {
+    ESP_LOGV(TAG, "Settling %u pixels", (unsigned) this->unsettled_count_);
+    this->settling_ = true;
+    this->settling_copy_ = true;
+    this->settle_saved_count_ = this->update_count_;
+    this->passes_[0] = Pass::SETTLE;
+    this->pass_count_ = 1;
+    this->pass_index_ = 0;
+    this->unchanged_ = false;
+    this->update_start_time_ = millis();
+    this->set_state_(epaper_spi::EPaperState::RESET);
+    this->enable_loop();
+    return;
+  }
+  this->switch_supplies_off_();
   this->set_timeout("sleep", CONTROLLER_IDLE_MS, [this]() { this->sleep_controllers_(); });
+}
+
+// Settling straight away, waiting on BUSY, for a deep sleep that cannot wait for an update.
+void CrowPanel579::settle_now_() {
+  this->find_unsettled_rows_();
+  this->plane_ = 0;
+  while (!this->send_planes_(Source{nullptr, this->unsettled_}, Source{nullptr, this->glass_})) {
+  }
+  this->cmd_data(0x3C, {BORDER_PARTIAL});
+  this->cmd_data(0x21, {0x00, 0x10});
+  this->load_waveform_(SETTLE.bytes);
+  this->command(0x20);
+  this->wait_idle_(3000);
+  while (!this->send_planes_(Source{nullptr, this->glass_}, Source{nullptr, this->glass_})) {
+  }
+  memset(this->unsettled_, 0, BIT_PLANE);
+  this->unsettled_count_ = 0;
+}
+
+void CrowPanel579::wait_idle_(uint32_t timeout_ms) {
+  const uint32_t start = millis();
+  delay(2);  // BUSY rises a moment after the command
+  while (!this->is_idle_() && millis() - start < timeout_ms)
+    delay(1);
+}
+
+// Switches the ±15 V supplies off, without waiting: the next command waits for BUSY anyway.
+void CrowPanel579::switch_supplies_off_() {
+  if (!this->supplies_on_)
+    return;
+  this->cmd_data(0x22, {SUPPLIES_OFF});
+  this->command(0x20);
+  this->supplies_on_ = false;
 }
 
 // Deep sleep mode 1 keeps RAM. The next update wakes the controllers with a hardware reset.
 void CrowPanel579::sleep_controllers_() {
+  this->cancel_timeout("idle");
   this->cancel_timeout("sleep");
+  if (this->supplies_on_) {
+    this->switch_supplies_off_();
+    this->wait_idle_(500);
+  }
   this->cmd_data(0x10, {0x01});
   this->awake_ = false;
 }

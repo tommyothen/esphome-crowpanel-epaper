@@ -4,17 +4,19 @@ ESPHome display components for ELECROW's CrowPanel ESP32-S3 e-paper HMI
 boards. `crowpanel_579` drives the 5.79", a 792x272 panel run by two SSD1683
 controllers in cascade. The 4.2" comes next.
 
-- Partial refreshes in about 1 s that drive only the pixels that change, so
-  greys elsewhere on the screen survive any number of them. They send only
+- Partial refreshes that drive only the pixels that change, so greys
+  elsewhere on the screen survive any number of them: about 0.9 s from cold,
+  and 0.48 s while updates keep coming, a dial turning say. They send only
   the rows that changed, and when nothing did, the panel is not driven at
   all.
 - Four greys in about 3.9 s: Waveshare's grey waveform with the particle
   shaking cut from five rounds to one, which saves 1.8 s and leaves the greys
   measuring the same. Or seven, in three passes and about 4.7 s.
-- Every waveform the driver loads is balanced: each pixel spends as long
-  driven one way as the other on every refresh, so nothing builds up in the
-  panel however long it runs. The build checks this, so a change that breaks
-  it does not compile.
+- Every pixel's drive stays balanced: as long one way as the other, so
+  nothing builds up in the panel however long it runs. Most refreshes balance
+  on their own; the fast partials are tracked a pixel at a time and cancelled.
+  The build checks every waveform, so a change that breaks this does not
+  compile.
 - Deep sleep keeps the picture. The panel holds its frame and its RAM while
   the ESP32 sleeps, so the first update after a wake is partial, with no
   flash, and `full_update_every` keeps counting across wakes.
@@ -100,9 +102,21 @@ one when they move.
 
 ## Looking after the panel
 
-- Both loaded waveforms, the partial and the grey one, give every pixel as
-  many frames at +15 V as at -15 V on every refresh, with VCOM held at its DC
-  level. A `static_assert` checks both tables when the component compiles.
+- The partial, grey and seven-grey waveforms give every pixel as many frames
+  at +15 V as at -15 V on every refresh, with VCOM held at its DC level. A
+  `static_assert` checks each table when the component compiles.
+- Fast partials are the exception, on purpose. An update that comes within
+  five seconds of the last finds the ±15 V supplies still on and starts an
+  active spell: it skips switching them on (0.1 s) and pushes each changing
+  pixel one way only, 15 frames instead of 15 each way. The driver keeps a
+  bit a pixel for "pushed, not yet cancelled"; each fast change flips it, so
+  no pixel is ever more than one push out. Before a grey refresh, a 15-frame
+  push back cancels them, hidden by the grey's flash. When five seconds pass
+  with no update, or before a deep sleep, a settling pass does it instead:
+  only those pixels blink, 40 frames over and 25 back, and land where they
+  were. Then the supplies go off, and ten seconds later the controllers
+  sleep. Outside a spell nothing is out of balance, so a device that wakes,
+  draws once and sleeps runs exactly as before.
 - After each refresh the controllers discharge the pixels (end option 0x22)
   and go into deep sleep, so nothing stays driven between updates.
 - The panel's own full refresh, used when `grey` is off, is its OTP waveform:
@@ -212,6 +226,8 @@ community drivers listed below, and testing on the board.
   back to back within one loop call, and leaves the controllers awake for
   ten seconds after an update, so the next one skips their reset. A partial
   went from 1.17 s to 1.0 s.
+- **One SPI write a row was slow.** Each write costs more than its 50
+  bytes, so rows now go out 16 at a time.
 - **Only what changed.** The driver keeps a hash of each row's black and
   white reading as the glass shows it, 1 KB in RTC memory so it survives
   deep sleep. A partial sends, and afterwards copies back, only the band of
@@ -235,6 +251,18 @@ community drivers listed below, and testing on the board.
   0.58, 0.69, 0.86 and 1.00, and partials over them changed none by more
   than 0.02. The camera sees a strong lamp gradient across the panel, so
   every reading here is corrected against flat frames.
+- **Keeping the supplies on.** 0x22 0xCC switches the supplies on and runs
+  the loaded waveform, leaving them on; 0x0C runs it with them already on;
+  0x03 switches them off. Each switch takes about 0.1 s. GxEPD2 leaves them
+  on between partials too. Whether an idle controller with its supplies on
+  puts a voltage across the pixels was the worry: over two minutes, a grey
+  frame drifted no more with them on than off (light grey 0.45 to 0.44
+  against 0.40 to 0.38, the ink settling either way).
+- **Settling.** The pass that cancels a fast partial without a grey refresh
+  to hide it must add one push's worth of drive and still leave each pixel
+  where it was, so it pushes past the far colour and comes back. Measured
+  against flat frames: 30 frames over and 15 back left whites at 0.96, 40
+  and 25 at 1.02, 45 and 30 at 1.03.
 - **Read back.** The controllers can report their temperature, RAM and display
   options, but only over the data line, which the board wires to one GPIO as
   an output. Reading would mean bit-banging it.
