@@ -5,7 +5,9 @@ boards. `crowpanel_579` drives the 5.79", a 792x272 panel run by two SSD1683
 controllers in cascade. The 4.2" comes next.
 
 - Partial refreshes in about 1 s that drive only the pixels that change, so
-  greys elsewhere on the screen survive any number of them.
+  greys elsewhere on the screen survive any number of them. They send only
+  the rows that changed, and when nothing did, the panel is not driven at
+  all.
 - Four greys in about 3.9 s: Waveshare's grey waveform with the particle
   shaking cut from five rounds to one, which saves 1.8 s and leaves the greys
   measuring the same. Or seven, in three passes and about 4.7 s.
@@ -210,6 +212,12 @@ community drivers listed below, and testing on the board.
   back to back within one loop call, and leaves the controllers awake for
   ten seconds after an update, so the next one skips their reset. A partial
   went from 1.17 s to 1.0 s.
+- **Only what changed.** The driver keeps a hash of each row's black and
+  white reading as the glass shows it, 1 KB in RTC memory so it survives
+  deep sleep. A partial sends, and afterwards copies back, only the band of
+  rows that changed: a clock tick sends a sixth of the frame and takes
+  0.92 s. A redraw that changes nothing skips the refresh and takes only
+  the drawing, about 50 ms.
 - **Grey.** The OTP has no grey waveform; claiming 80 to 127 °C with 0x1A in
   display mode 1 gives only black and white. Waveshare's four-grey waveform
   for their 4.2" V2, another SSD1683, works. Each pixel's high bit goes to

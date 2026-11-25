@@ -81,7 +81,7 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
 
   uint8_t level_(Color color) const;
   // Point one controller's RAM window and address counters at the start of its half.
-  void set_ram_area_(bool left);
+  void set_ram_area_(bool left, uint16_t first_y, uint16_t end_y);
   // One controller's half of a plane row, through a table from a buffer byte (two pixels) to
   // their two bits.
   void plane_half_(size_t y, size_t offset, const uint8_t *bits, uint8_t *out);
@@ -92,6 +92,8 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   // Send the RAM plane passes from plane_ on, in slices, through the given tables; true once all
   // four are out.
   bool send_planes_(const uint8_t *old_bits, const uint8_t *new_bits);
+  uint32_t row_hash_(size_t y);
+  bool find_changed_rows_();
 
   InternalGPIOPin *power_pin_{nullptr};
   InternalGPIOPin *hold_reset_pin_{nullptr};
@@ -107,6 +109,12 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   uint32_t last_colour_{UINT32_MAX};  // draw_pixel_at's last colour and its level
   uint8_t last_level_{0};
   uint8_t plane_{0};  // 0 and 1: 0x26, left then right; 2 and 3: 0x24
+  bool sending_{false};             // a plane is part way out
+  uint16_t row_{0};                 // the next row of it
+  uint16_t first_row_{0};           // the rows this update sends: all, or a partial's changed band
+  uint16_t end_row_{HEIGHT};
+  bool unchanged_{false};           // a partial update in which no row changed
+  uint32_t new_rows_[HEIGHT]{};     // a partial's row hashes, for the glass once it has run
 };
 
 }  // namespace esphome::crowpanel_579
