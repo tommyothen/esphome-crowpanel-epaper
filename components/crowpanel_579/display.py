@@ -66,7 +66,7 @@ CONFIG_SCHEMA = cv.All(
             # black and white (about 3.7 s). Partial refreshes stay black and white.
             cv.Optional(CONF_GREY, default=False): cv.boolean,
             # 7 runs each grey refresh in three passes, with a half step between each of the
-            # four greys (about 5 s). Needs grey.
+            # four greys (about 4.7 s). Needs grey.
             cv.Optional(CONF_GREY_LEVELS, default=4): cv.one_of(4, 7, int=True),
             # Something else decides when to draw (an interval, HA, the dial).
             cv.Optional(CONF_UPDATE_INTERVAL, default="never"): cv.update_interval,

@@ -4,11 +4,11 @@ ESPHome display components for ELECROW's CrowPanel ESP32-S3 e-paper HMI
 boards. `crowpanel_579` drives the 5.79", a 792x272 panel run by two SSD1683
 controllers in cascade. The 4.2" comes next.
 
-- Partial refreshes in about 1.2 s that drive only the pixels that change, so
+- Partial refreshes in about 1 s that drive only the pixels that change, so
   greys elsewhere on the screen survive any number of them.
 - Four greys in about 4.1 s: Waveshare's grey waveform with the particle
   shaking cut from five rounds to one, which saves 1.8 s and leaves the greys
-  measuring the same. Or seven, in three passes and about 5.3 s.
+  measuring the same. Or seven, in three passes and about 4.7 s.
 - Every waveform the driver loads is balanced: each pixel spends as long
   driven one way as the other on every refresh, so nothing builds up in the
   panel however long it runs. The build checks this, so a change that breaks
@@ -185,14 +185,31 @@ community drivers listed below, and testing on the board.
   and then towards black for 15, one turning white the other way round, and
   the rest get nothing. It clears a moved box a little better than the OTP's
   and leaves greys untouched. Pushing one way only, for 20 frames, clears a
-  little better still but balances only over many changes.
+  little better still but balances only over many changes. Fewer frames are
+  faster but leave more behind, measured against flat frames (1 is white):
+
+  | Frames a half | Black a partial drew, cleared | Black a grey refresh drew, cleared | Black drawn |
+  |---|---|---|---|
+  | 8 | 0.75 | 0.40 | 0.13 |
+  | 10 | 0.83 | 0.60 | 0.11 |
+  | 12 | 0.86 | 0.72 | 0.09 |
+  | 15 | 0.89 | 0.83 | 0.07 |
+
 - **What a partial compares.** RAM 0x26 should hold what is on the glass and
-  0x24 the new frame. A full refresh leaves 0x26 right. A partial refresh
-  swaps the banks 0x24 and 0x26 address until the next reset, which is what
-  RAM ping-pong (0x37, set from the OTP) does: afterwards, writing the new
-  frame to 0x24 alone makes the next partial right and 0x26 alone does not.
-  The driver writes both, as GxEPD2's `writeImageAgain` does, which works
-  either way.
+  0x24 the new frame. A refresh with a loaded waveform swaps the banks 0x24
+  and 0x26 address until the next reset, which is what RAM ping-pong (0x37,
+  set from the OTP) does: after a partial, writing the new frame to 0x24
+  alone makes the next partial right and 0x26 alone does not. The driver
+  writes the frame's black and white reading to both after every such
+  refresh, as GxEPD2's `writeImageAgain` does, so the next partial is right
+  with or without a reset in between.
+- **Where the time goes.** A partial refresh drives the panel for 0.85 s;
+  the rest was resetting and initialising the controllers, sending the
+  frame, writing it back to both planes, and waiting for ESPHome's next loop
+  (about 16 ms) between each of a dozen steps. The driver runs the steps
+  back to back within one loop call, and leaves the controllers awake for
+  ten seconds after an update, so the next one skips their reset. A partial
+  went from 1.17 s to 1.0 s.
 - **Grey.** The OTP has no grey waveform; claiming 80 to 127 °C with 0x1A in
   display mode 1 gives only black and white. Waveshare's four-grey waveform
   for their 4.2" V2, another SSD1683, works. Each pixel's high bit goes to
@@ -200,14 +217,14 @@ community drivers listed below, and testing on the board.
   which leaves the pixels charged to the last phase (+15 V on black); the
   datasheet asks for 0x22, which discharges them, and the greys look the same.
 - **Seven greys.** Each pixel's RAM bits pick one of four waveforms, so one
-  refresh gives four greys at most. A seven-grey refresh runs three, each
-  after its own reset: a half step towards black for the odd levels (4
+  refresh gives four greys at most. A seven-grey refresh runs three: a half
+  step towards black for the odd levels (4
   frames up from black, 1 from dark grey, 2 from light, since a grey answers
   a push by how dark it is), the four greys with dark and light driven less
   so they sit evenly apart, and the same half step towards white. The two
   half steps cancel, and the middle pass balances on its own. Measured
-  against flat white and black frames, the seven read 0.01, 0.21, 0.47,
-  0.58, 0.70, 0.85 and 0.99, and four partials over them changed none by more
+  against flat white and black frames, the seven read 0.01, 0.18, 0.45,
+  0.58, 0.69, 0.86 and 1.00, and partials over them changed none by more
   than 0.02. The camera sees a strong lamp gradient across the panel, so
   every reading here is corrected against flat frames.
 - **Read back.** The controllers can report their temperature, RAM and display

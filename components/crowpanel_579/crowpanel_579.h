@@ -14,8 +14,9 @@ namespace esphome::crowpanel_579 {
  * nibble and the right one its low nibble.
  *
  * EPaperBase runs the update as a state machine from loop(): BUSY is polled, never waited on,
- * and the data goes out in 10 ms slices. Every update resets and initialises the controllers,
- * sends the RAM planes, refreshes, then sleeps them.
+ * and the data goes out in 10 ms slices, several to a loop() call. An update resets and
+ * initialises the controllers unless the last one left them awake, sends the RAM planes,
+ * refreshes, and leaves them awake for ten seconds before deep sleep.
  *
  * The buffer holds 4 bits a pixel: a level from 0 (black) to 6 (white). With four greys only
  * the even levels are drawn. Each refresh picks one of four waveforms for every pixel from the
@@ -23,15 +24,15 @@ namespace esphome::crowpanel_579 {
  *  - a partial one compares 0x26 (what the panel shows) with 0x24 (the new frame), each pixel
  *    white from level 4 up, and drives only the pixels that change, so greys elsewhere stay;
  *  - a four-grey one takes level / 2 as two bits, high in 0x26 and low in 0x24;
- *  - a seven-grey one runs three passes, each with its own reset: a half step towards black for
- *    the odd levels, the four-grey refresh of level / 2, and the same half step towards white,
- *    so every pixel's drive still nets to nothing;
+ *  - a seven-grey one runs three passes: a half step towards black for the odd levels, the
+ *    four-grey refresh of level / 2, and the same half step towards white, so every pixel's
+ *    drive still nets to nothing;
  *  - with grey off, a full refresh is the panel's own black and white one.
  * Colours follow epaper_spi: Color::BLACK is ink, Color::WHITE is paper.
  *
- * After every update, 0x26 holds what is on the glass, black or white: a black and white or a
- * four-grey refresh leaves it so, and after a partial or seven-grey one the driver writes that
- * reading to both planes. A partial refresh therefore sends only the new frame, and the panel's
+ * After every update, 0x26 holds what is on the glass, black or white: the panel's own black and
+ * white refresh leaves it so, and after any other the driver writes that reading to both planes.
+ * A partial refresh therefore sends only the new frame, and the panel's
  * RAM is the only copy of what it shows, which is what lets the ESP sleep. Through deep sleep the
  * driver holds the panel's power and reset pins high, so the panel keeps its picture and its RAM;
  * after a wake the full_update_every count carries on, and the first update can be partial.
@@ -48,6 +49,7 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
 
   void setup() override;
   void loop() override;
+  void update() override;
   void on_safe_shutdown() override;
   void fill(Color color) override;
   void draw_pixel_at(int x, int y, Color color) override;
@@ -80,6 +82,8 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   // One controller's half of a plane row, through a table from a buffer byte (two pixels) to
   // their two bits.
   void plane_half_(size_t y, size_t offset, const uint8_t *bits, uint8_t *out);
+  // Put the controllers into deep sleep now rather than after CONTROLLER_IDLE_MS.
+  void sleep_controllers_();
   // Load a 233-byte waveform (0x32 and its tail) and select it for the refresh.
   void load_waveform_(const uint8_t *waveform);
   // Send the RAM plane passes from plane_ on, in slices, through the given tables; true once all
@@ -95,6 +99,7 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   bool next_pass_{false};         // a pass has finished and loop() starts the next
   bool copying_{false};           // writing the black and white reading to both planes
   bool reset_sent_{false};
+  bool awake_{false};  // the controllers have been reset and not slept since
   uint8_t plane_{0};  // 0 and 1: 0x26, left then right; 2 and 3: 0x24
 };
 

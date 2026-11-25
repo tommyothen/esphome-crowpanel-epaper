@@ -18,6 +18,10 @@ static constexpr uint8_t LEFT = 0x80;
 static constexpr uint8_t LAST_X = 0x31;  // the 50th byte of a controller's RAM row
 static constexpr uint8_t LAST_Y_LOW = (CrowPanel579::HEIGHT - 1) & 0xFF;
 static constexpr uint8_t LAST_Y_HIGH = (CrowPanel579::HEIGHT - 1) >> 8;
+// How long one loop() call may run the update's steps back to back, well inside ESPHome's 50 ms.
+static constexpr uint32_t STEP_BUDGET_MS = 25;
+// How long the controllers stay awake after an update, so the next one skips their reset.
+static constexpr uint32_t CONTROLLER_IDLE_MS = 10000;
 
 // Display update control (0x22) sequences. The full one reads the panel's temperature sensor and
 // loads the matching OTP waveform first; the partial and grey ones run a waveform loaded with 0x32.
@@ -251,7 +255,7 @@ void CrowPanel579::on_safe_shutdown() {
   const bool settled =
       !this->next_pass_ && (this->state_ == EPaperState::IDLE || this->state_ == EPaperState::DEEP_SLEEP);
   slept_update_count = settled ? this->update_count_ : 0;
-  this->deep_sleep();
+  this->sleep_controllers_();
   hold(this->power_pin_, true);
   hold(this->hold_reset_pin_, true);
   gpio_deep_sleep_hold_en();
@@ -285,7 +289,16 @@ void HOT CrowPanel579::draw_pixel_at(int x, int y, Color color) {
   pair = (x & 1) ? (pair & 0xF0) | level : (pair & 0x0F) | level << 4;  // the first pixel in the high nibble
 }
 
+void CrowPanel579::update() {
+  this->cancel_timeout("sleep");
+  EPaperBase::update();
+}
+
+// Controllers still awake from the last update need no reset or initialisation: every refresh
+// loads its own waveform and settings, and every plane it reads is written for it.
 bool CrowPanel579::reset() {
+  if (this->awake_)
+    return true;
   if (!EPaperBase::reset())
     return false;  // reset is held low; the base calls back after reset_duration_
   this->next_delay_ = 10;  // give the controllers time to come out of reset before BUSY is read
@@ -295,6 +308,8 @@ bool CrowPanel579::reset() {
 // A software reset, then the internal temperature sensor; the refresh loads its own waveform.
 // The reset sets the controllers working, so BUSY is polled again after it.
 bool CrowPanel579::initialise(bool partial) {
+  if (this->awake_)
+    return true;
   if (!this->is_idle_())
     return false;
   if (!this->reset_sent_) {
@@ -305,6 +320,7 @@ bool CrowPanel579::initialise(bool partial) {
   }
   this->cmd_data(0x18, {0x80});
   this->reset_sent_ = false;
+  this->awake_ = true;
   return true;
 }
 
@@ -418,12 +434,12 @@ void CrowPanel579::refresh_screen(bool partial) {
 }
 
 // Runs once a refresh has finished. A seven-grey refresh has passes left: loop() starts the next.
-// After its last pass, or after a partial refresh, 0x26 does not hold the frame on the glass, so
-// its black and white reading goes to both planes for the next partial to compare with. The base
-// moves straight on to sleeping the controllers, so loop() writes them first, in slices. Both
-// planes, as GxEPD2's writeImageAgain does: on this panel a refresh swaps the banks 0x24 and 0x26
-// address until the next reset, which is what RAM ping-pong (0x37) does, so after a partial 0x24
-// alone would do and 0x26 alone does not. Both work whichever way a panel's OTP sets it.
+// After the last, the frame's black and white reading goes to both planes for the next partial
+// to compare with; the base moves straight on to sleeping the controllers, so loop() writes them
+// first, in slices. Both planes, as GxEPD2's writeImageAgain does, because a refresh with a loaded
+// waveform swaps the banks 0x24 and 0x26 address until the next reset (RAM ping-pong, 0x37): with
+// both holding the same frame, the next partial is right with or without a reset in between.
+// The panel's own black and white refresh writes both planes before it and does not swap.
 void CrowPanel579::power_off() {
   if (this->kind_ == Kind::SEVEN_GREYS && this->grey_pass_ < 2) {
     this->grey_pass_++;
@@ -431,23 +447,34 @@ void CrowPanel579::power_off() {
     return;
   }
   this->grey_pass_ = 0;
-  this->copying_ = this->kind_ == Kind::PARTIAL || this->kind_ == Kind::SEVEN_GREYS;
+  this->copying_ = this->kind_ != Kind::BLACK_WHITE;
 }
 
+// The base runs one step of the update a loop() call, and ESPHome calls loop() about every 16 ms,
+// so the steps run back to back here instead, until one has to wait (BUSY, a delay) or the
+// budget is spent.
 void CrowPanel579::loop() {
-  if (this->copying_) {
-    if (!this->send_planes_(WHITE_BITS.table, WHITE_BITS.table))
-      return;
-    this->copying_ = false;
+  const uint32_t start = millis();
+  while (millis() - start < STEP_BUDGET_MS) {
+    if (this->copying_) {
+      if (!this->send_planes_(WHITE_BITS.table, WHITE_BITS.table))
+        continue;
+      this->copying_ = false;
+    }
+    // Each pass of a seven-grey refresh is a full update to the base, and the count goes back so
+    // the three count as one.
+    if (this->next_pass_ && this->state_ == epaper_spi::EPaperState::DEEP_SLEEP) {
+      this->next_pass_ = false;
+      this->update_count_ = 0;
+      this->set_state_(epaper_spi::EPaperState::RESET);
+    }
+    const auto state = this->state_;
+    const auto row = this->current_data_index_;
+    const auto plane = this->plane_;
+    EPaperBase::loop();
+    if (this->state_ == state && this->current_data_index_ == row && this->plane_ == plane)
+      return;  // waiting
   }
-  // Each pass of a seven-grey refresh is a full update to the base, reset to refresh, and the
-  // count goes back so the three count as one.
-  if (this->next_pass_ && this->state_ == epaper_spi::EPaperState::DEEP_SLEEP) {
-    this->next_pass_ = false;
-    this->update_count_ = 0;
-    this->set_state_(epaper_spi::EPaperState::RESET);
-  }
-  EPaperBase::loop();
 }
 
 // Loads a waveform and runs it: 0x22 0xCF skips the OTP's temperature lookup and waveform.
@@ -461,7 +488,17 @@ void CrowPanel579::load_waveform_(const uint8_t *waveform) {
   this->cmd_data(0x22, {UPDATE_LOADED});
 }
 
+// The base sleeps the controllers after every update; here they stay awake for a while, so a quick
+// run of updates, a dial turning, skips the reset and initialisation each time.
+void CrowPanel579::deep_sleep() {
+  this->set_timeout("sleep", CONTROLLER_IDLE_MS, [this]() { this->sleep_controllers_(); });
+}
+
 // Deep sleep mode 1 keeps RAM. The next update wakes the controllers with a hardware reset.
-void CrowPanel579::deep_sleep() { this->cmd_data(0x10, {0x01}); }
+void CrowPanel579::sleep_controllers_() {
+  this->cancel_timeout("sleep");
+  this->cmd_data(0x10, {0x01});
+  this->awake_ = false;
+}
 
 }  // namespace esphome::crowpanel_579
