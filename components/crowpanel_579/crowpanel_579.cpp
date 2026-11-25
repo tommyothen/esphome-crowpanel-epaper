@@ -155,14 +155,18 @@ struct EvenGreyWaveform {
 static constexpr EvenGreyWaveform EVEN_GREY{};
 
 // The seven-grey refresh's outer passes: a half step, towards black before the middle pass and
-// towards white after it, so the two cancel. The pixel's two RAM bits say which: none (BB), level
-// 2 from dark grey (WB), level 3 from dark grey (BW) or level 5 from light grey (WW). They run at
-// 125 Hz, 8 ms a frame, since a single 20 ms frame moves a grey too far: at room temperature 2, 4
-// and 3 frames land levels 2, 3 and 5 at 0.32, 0.53 and 0.84. The middle pass runs faster in the
-// warm and slower in the cold, so these scale with it, one set of lengths for each band.
+// towards white after it, so the two cancel. The pixel's two RAM bits say which: level 2 (and
+// white, which a push and a pull leave white) from dark grey (WB), level 3 from dark grey (BW),
+// level 5 from light grey (WW), or for levels 0, 1 and 4, a one-frame trim (BB), towards white
+// before and towards black after, which takes level 1 from 0.19 to 0.17 and light grey from 0.70
+// to 0.64, and leaves black black. They run at 125 Hz, 8 ms a frame, since a single 20 ms frame
+// moves a grey too far: at room temperature 2, 4 and 3 frames land levels 2, 3 and 5 at 0.30,
+// 0.50 and 0.82. The middle pass runs faster in the warm and slower in the cold, so these scale
+// with it, one set of lengths for each band; the trim stays a frame.
 struct HalfStepWaveform {
   uint8_t bytes[233];
   constexpr HalfStepWaveform(bool white, uint8_t level_2, uint8_t level_3, uint8_t level_5) : bytes() {
+    constexpr uint8_t TRIM = 1;
     // Phase A is level 2's length; B and C add what levels 3 and 5 need beyond it.
     const uint8_t shorter = level_3 < level_5 ? level_3 : level_5, longer = level_3 < level_5 ? level_5 : level_3;
     const uint8_t lengths[3] = {level_2, static_cast<uint8_t>(shorter - level_2),
@@ -174,9 +178,11 @@ struct HalfStepWaveform {
       bytes[t * 42] = 1;
       for (int p = 0; p < 3; p++)
         bytes[t * 42 + 1 + p] = (((phases_of_table[t] >> p) & 1) ? drive : 0) | lengths[p];
+      bytes[t * 42 + 4] = TRIM;  // phase D: the trim, driven only in BB
       bytes[t * 42 + 5] = 1;
       bytes[t * 42 + 6] = 1;
     }
+    bytes[4 * 42 + 4] = (white ? 0x40 : 0x80) | TRIM;  // BB: towards white before, black after
     bytes[224] = 0x05;  // 125 Hz
     for (int i = 227; i < 233; i++)
       bytes[i] = GREY_LUT[i];
@@ -246,6 +252,23 @@ static constexpr int net_drive(const uint8_t *waveform, int t) {
   }
   return net;
 }
+// Whether every table of a waveform runs to the same timing as VCOM's: the same repeat counts,
+// phase lengths and state repeats. The datasheet gives each table its own, but every SSD1683
+// waveform known keeps them equal, and net_drive counts each table by its own: a table timed
+// differently could make the count wrong.
+static constexpr bool same_timing(const uint8_t *waveform) {
+  for (int t = 1; t < 5; t++) {
+    for (int g = 0; g < 6; g++) {
+      for (int i = 0; i < 7; i++) {
+        const uint8_t mask = (i >= 1 && i <= 4) ? 0x3F : 0xFF;
+        if ((waveform[t * 42 + g * 7 + i] & mask) != (waveform[g * 7 + i] & mask))
+          return false;
+      }
+    }
+  }
+  return true;
+}
+
 // Whether the waveforms run in turn leave no net drive on any pixel.
 static constexpr bool balanced(std::initializer_list<const uint8_t *> waveforms) {
   for (int t = 0; t < 5; t++) {
@@ -257,6 +280,12 @@ static constexpr bool balanced(std::initializer_list<const uint8_t *> waveforms)
   }
   return true;
 }
+static_assert(same_timing(PARTIAL.bytes) && same_timing(GREY_LUT) && same_timing(EVEN_GREY.bytes) &&
+                  same_timing(HALF_TO_BLACK[0].bytes) && same_timing(HALF_TO_BLACK[1].bytes) &&
+                  same_timing(HALF_TO_BLACK[2].bytes) && same_timing(HALF_TO_BLACK[3].bytes) &&
+                  same_timing(HALF_TO_WHITE[0].bytes) && same_timing(HALF_TO_WHITE[1].bytes) &&
+                  same_timing(HALF_TO_WHITE[2].bytes) && same_timing(HALF_TO_WHITE[3].bytes),
+              "every table of a waveform must run to VCOM's timing");
 static_assert(balanced({PARTIAL.bytes}), "the partial waveform must leave no net drive on a pixel");
 static_assert(balanced({GREY_LUT}), "the grey waveform must leave no net drive on a pixel");
 static_assert(balanced({EVEN_GREY.bytes}), "the even grey waveform must leave no net drive on a pixel");
@@ -279,6 +308,8 @@ static_assert(net_drive(ONE_WAY.bytes, TABLE_BW) == FAST_FRAMES && net_drive(ONE
               "a fast partial pushes only the pixels that change, one push each");
 static_assert(cancels(CORRECTION.bytes), "cancelling must undo a fast partial's push exactly");
 static_assert(cancels(SETTLE.bytes), "settling must undo a fast partial's push exactly");
+static_assert(same_timing(ONE_WAY.bytes) && same_timing(CORRECTION.bytes) && same_timing(SETTLE.bytes),
+              "every table of a waveform must run to VCOM's timing");
 
 
 // For each RAM bit a refresh needs, the levels (0 to 6) that set it, and from that a table from a
@@ -289,7 +320,7 @@ static constexpr uint8_t WHITE = 0b1110000;      // levels 4 to 6: a partial's r
 // the even levels are drawn, and level 2 is dark grey.
 static constexpr uint8_t GREY_LOW = 0b1001110;   // levels 1, 2, 3 and 6: dark grey or white
 static constexpr uint8_t HALF_HIGH = 0b0101000;  // levels 3 and 5: the half step's high bit
-static constexpr uint8_t HALF_LOW = 0b0100100;   // levels 2 and 5: the half step's low bit
+static constexpr uint8_t HALF_LOW = 0b1100100;   // levels 2, 5 and 6: the half step's low bit
 struct PlaneBits {
   uint8_t table[256];
   constexpr PlaneBits(uint8_t levels) : table() {

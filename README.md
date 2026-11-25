@@ -105,7 +105,9 @@ one when they move.
 
 - The partial, grey and seven-grey waveforms give every pixel as many frames
   at +15 V as at -15 V on every refresh, with VCOM held at its DC level. A
-  `static_assert` checks each table when the component compiles.
+  `static_assert` checks each table when the component compiles, and another
+  that every table of a waveform runs to the same timing, since the count
+  trusts each table's own.
 - Fast partials are the exception, on purpose. Once the driver knows what
   the glass shows, which is from the first update after a boot or a wake,
   a partial pushes each changing pixel one way only: 15 frames instead of
@@ -276,10 +278,14 @@ community drivers listed below, and testing on the board.
   frames of black at the very end at 0.12, so the middle pass makes dark grey
   level 1 directly, at 0.20, and the half steps carry levels 2 and 3 up from
   it. They run at 125 Hz, 8 ms a frame, since one 20 ms frame moves a grey too
-  far: 2, 4 and 3 frames for levels 2, 3 and 5. Measured against flat white
-  and black frames, the seven read 0.02, 0.19, 0.30, 0.52, 0.71, 0.82 and
-  0.99, within 0.04 of even steps (the first try was 0.01, 0.18, 0.47, 0.61,
-  0.71, 0.87 and 1.00), and partials over them changed none by more than
+  far: 2, 4 and 3 frames for levels 2, 3 and 5. Pixels that get no half step
+  get a one-frame trim instead, towards white before and black after, which
+  takes level 1 and light grey down a touch and leaves black black; white
+  shares level 2's step, which a push and a pull leave white. Measured
+  against flat white and black frames, the seven read 0.02, 0.17, 0.30, 0.50,
+  0.63, 0.81 and 0.99, within 0.04 of even steps (the first try was 0.01,
+  0.18, 0.47, 0.61, 0.71, 0.87 and 1.00), and partials over them changed none
+  by more than
   0.01. The camera sees a strong lamp gradient across the panel, so every
   reading here is corrected against flat frames.
 - **Keeping the supplies on.** 0x22 0xCC switches the supplies on and runs
