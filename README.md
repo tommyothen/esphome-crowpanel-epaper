@@ -5,8 +5,8 @@ boards. `crowpanel_579` drives the 5.79", a 792x272 panel run by two SSD1683
 controllers in cascade. The 4.2" comes next.
 
 - Partial refreshes that drive only the pixels that change, so greys
-  elsewhere on the screen survive any number of them: about 0.9 s for the
-  first after a boot or a wake, then about 0.5 s. They send only the rows
+  elsewhere on the screen survive any number of them: about 1.3 s for the
+  first after a boot or a wake, then 0.4 to 0.5 s. They send only the rows
   that changed, and when nothing did, the panel is not driven at all.
 - Four greys in about 3.9 s: Waveshare's grey waveform with the particle
   shaking cut from five rounds to one, which saves 1.8 s and leaves the greys
@@ -225,6 +225,16 @@ community drivers listed below, and testing on the board.
   | 12 | 0.86 | 0.72 | 0.09 |
   | 15 | 0.89 | 0.83 | 0.07 |
 
+- **The cold partial.** The first partial after a boot or a wake runs the
+  balanced waveform, since the driver does not yet know what the glass
+  shows. Nobody is usually watching it, so it can afford more frames:
+
+  | Frames a half | Time | Black a grey refresh drew, cleared | Black a partial drew, cleared |
+  |---|---|---|---|
+  | 15 | 0.89 s | 0.80 | 0.93 |
+  | 20 | 1.10 s | 0.89 | 0.96 |
+  | 25, the driver's | 1.29 s | 0.93 | 0.97 |
+
 - **What a partial compares.** RAM 0x26 should hold what is on the glass and
   0x24 the new frame. A refresh with a loaded waveform swaps the banks 0x24
   and 0x26 address until the next reset, which is what RAM ping-pong (0x37,
@@ -233,13 +243,14 @@ community drivers listed below, and testing on the board.
   writes the frame's black and white reading to both after every such
   refresh, as GxEPD2's `writeImageAgain` does, so the next partial is right
   with or without a reset in between.
-- **Where the time goes.** A partial refresh drives the panel for 0.85 s;
-  the rest was resetting and initialising the controllers, sending the
-  frame, writing it back to both planes, and waiting for ESPHome's next loop
-  (about 16 ms) between each of a dozen steps. The driver runs the steps
-  back to back within one loop call, and leaves the controllers awake for
-  ten seconds after an update, so the next one skips their reset. A partial
-  went from 1.17 s to 1.0 s.
+- **Where the time goes.** A balanced 15-frame partial drove the panel for
+  0.85 s, switching the supplies on and off included, and the update took
+  1.17 s: the rest was resetting and initialising the controllers, sending
+  the frame, writing it back to both planes, and waiting for ESPHome's next
+  loop (about 16 ms) between each of a dozen steps. The driver runs the
+  steps back to back within one loop call and leaves the controllers awake
+  for a while after an update, which took that update to 1.0 s; keeping
+  the supplies on and pushing one way took a partial to 0.4 to 0.5 s.
 - **One SPI write a row was slow.** Each write costs more than its 50
   bytes, so rows now go out 16 at a time.
 - **Only what changed.** The driver keeps a hash of each row's black and

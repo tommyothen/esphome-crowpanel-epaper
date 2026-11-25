@@ -98,15 +98,18 @@ static constexpr uint8_t GREY_LUT[233] = {
   0x22, 0x17, 0x41, 0xA8, 0x32, 0x30
 };
 
-// The partial refresh's waveform, balanced on every change rather than only over time: a pixel
-// turning black is pushed towards white for 15 frames, then towards black for 15, and one turning
+// The cold partial refresh's waveform, for the first update after a boot or a wake, before the
+// driver knows what the glass shows. Balanced on every change rather than only over time: a pixel
+// turning black is pushed towards white for 25 frames, then towards black for 25, and one turning
 // white the other way round. The first push only deepens the colour the pixel already shows, so
-// nothing flashes. Pixels that keep their colour get no drive at all, so greys survive any number
-// of partial refreshes, where the panel's own partial waveform fades them. Busy for 0.85 s.
+// nothing flashes. Pixels that keep their colour get no drive at all, so greys survive, where the
+// panel's own partial waveform fades them. 25 frames rather than 15 clears black a grey refresh
+// drew to 0.93 rather than 0.80 on the camera, for 0.4 s more on an update nobody is usually
+// watching.
 struct PartialWaveform {
   uint8_t bytes[233];
   constexpr PartialWaveform() : bytes() {
-    constexpr uint8_t FRAMES = 15, NONE = FRAMES, BLACK = 0x40 | FRAMES, WHITE = 0x80 | FRAMES;
+    constexpr uint8_t FRAMES = 25, NONE = FRAMES, BLACK = 0x40 | FRAMES, WHITE = 0x80 | FRAMES;
     // Group 0's phases A and B for VCOM, WW, BW, WB and BB. The other groups repeat 0 times.
     constexpr uint8_t phases[5][2] = {{NONE, NONE}, {NONE, NONE}, {WHITE, BLACK}, {BLACK, WHITE}, {NONE, NONE}};
     for (int t = 0; t < 5; t++) {
