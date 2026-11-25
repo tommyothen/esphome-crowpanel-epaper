@@ -1,0 +1,103 @@
+# Bring-up test card for the crowpanel_579 driver. Needs no network: flash over
+# USB and read the log there.
+#
+#   esphome run test-card.yaml
+#
+# What it shows, and what to look for:
+# - A frame on the outermost pixels and the four corners named: a missing edge
+#   or mirrored text means the halves or the rotation are wrong.
+# - Four greys on each half: black, dark, light, white, the same both sides.
+# - Anti-aliased text in black and in dark grey.
+# - A counter across the seam and a box that moves every update. Every sixth
+#   update is a grey refresh; the ones between are partial and black and white,
+#   so the counter and the box lose their greys while the rest keeps them.
+esphome:
+  name: crowpanel-test-card
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: DEBUG
+  hardware_uart: UART0  # the USB-C port is a CH340 on UART0, not the S3's own USB
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+
+font:
+  - file: "gfonts://Inter@600"
+    id: small
+    size: 16
+    bpp: 2
+  - file: "gfonts://Inter@600"
+    id: medium
+    size: 28
+    bpp: 2
+  - file: "gfonts://Inter@700"
+    id: big
+    size: 72
+    bpp: 2
+    glyphs: "0123456789"
+
+globals:
+  - id: updates
+    type: uint32_t
+    initial_value: "0"
+
+# Fires once at boot too, so the first update is the first grey refresh.
+interval:
+  - interval: 10s
+    then:
+      - lambda: id(updates)++;
+      - component.update: epd
+
+display:
+  - platform: crowpanel_579
+    id: epd
+    grey: true
+    full_update_every: 6
+    lambda: |-
+      const int w = it.get_width(), h = it.get_height(), seam = 396;
+      const auto ink = Color::BLACK, paper = Color::WHITE;
+      const Color dark(64, 64, 64), light(128, 128, 128);
+
+      it.rectangle(0, 0, w, h, ink);
+      it.print(4, 4, id(small), ink, TextAlign::TOP_LEFT, "TOP LEFT", paper);
+      it.print(w - 4, 4, id(small), ink, TextAlign::TOP_RIGHT, "TOP RIGHT", paper);
+      it.print(4, h - 4, id(small), ink, TextAlign::BOTTOM_LEFT, "BOTTOM LEFT", paper);
+      it.print(w - 4, h - 4, id(small), ink, TextAlign::BOTTOM_RIGHT, "BOTTOM RIGHT", paper);
+
+      // Four greys on each half
+      const Color greys[] = {ink, dark, light, paper};
+      for (int i = 0; i < 4; i++) {
+        it.filled_rectangle(20 + i * 90, 36, 80, 60, greys[i]);
+        it.filled_rectangle(seam + 20 + i * 90, 36, 80, 60, greys[i]);
+      }
+      it.rectangle(seam + 290, 36, 80, 60, ink);
+      it.rectangle(290, 36, 80, 60, ink);
+
+      // Anti-aliased text, in black and in dark grey
+      it.print(20, 110, id(medium), ink, TextAlign::TOP_LEFT, "Bins out tonight", paper);
+      it.print(seam + 20, 110, id(medium), dark, TextAlign::TOP_LEFT, "Rain from 15:00", paper);
+      it.print(20, 146, id(small), ink, TextAlign::TOP_LEFT, "09:00 Dentist, 14:10 Team meeting", paper);
+      it.print(seam + 20, 146, id(small), dark, TextAlign::TOP_LEFT, "Milk, eggs, bin bags, coffee", paper);
+
+      // Partial refreshes in between: a counter and a box that moves
+      const uint32_t n = id(updates);
+      it.printf(seam, 252, id(big), ink, paper, TextAlign::BASELINE_CENTER, "%u", (unsigned) n);
+      it.filled_rectangle(n % 2 ? 40 : 600, 180, 150, 50, ink);
+      it.printf(seam, 4, id(small), ink, paper, TextAlign::TOP_CENTER, "update %u, %s", (unsigned) n,
+                (n - 1) % 6 == 0 ? "grey" : "partial");
