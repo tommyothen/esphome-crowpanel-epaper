@@ -13,7 +13,7 @@ how to draw:
 
 from esphome import pins
 import esphome.codegen as cg
-from esphome.components import display, spi
+from esphome.components import display, sensor, spi
 from esphome.components.epaper_spi.display import EPaperBase
 import esphome.config_validation as cv
 from esphome.const import (
@@ -35,6 +35,7 @@ DEPENDENCIES = ["spi"]
 CONF_GREY = "grey"
 CONF_GREY_LEVELS = "grey_levels"
 CONF_POWER_PIN = "power_pin"
+CONF_TEMPERATURE_SENSOR = "temperature_sensor"
 
 crowpanel_579_ns = cg.esphome_ns.namespace("crowpanel_579")
 CrowPanel579 = crowpanel_579_ns.class_("CrowPanel579", EPaperBase)
@@ -68,6 +69,9 @@ CONFIG_SCHEMA = cv.All(
             # 7 runs each grey refresh in three passes, with a half step between each of the
             # four greys (about 4.7 s). Needs grey.
             cv.Optional(CONF_GREY_LEVELS, default=4): cv.one_of(4, 7, int=True),
+            # The panel's temperature, or near enough: the waveforms run faster in the warm and
+            # slower in the cold, in the panel maker's bands. Without one they run as at 13 to 20 °C.
+            cv.Optional(CONF_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
             # Something else decides when to draw (an interval, HA, the dial).
             cv.Optional(CONF_UPDATE_INTERVAL, default="never"): cv.update_interval,
         }
@@ -97,6 +101,8 @@ async def to_code(config):
     cg.add(var.set_full_update_every(config[CONF_FULL_UPDATE_EVERY]))
     cg.add(var.set_grey(config[CONF_GREY]))
     cg.add(var.set_grey_levels(config[CONF_GREY_LEVELS]))
+    if temperature := config.get(CONF_TEMPERATURE_SENSOR):
+        cg.add(var.set_temperature_sensor(await cg.get_variable(temperature)))
 
     if lambda_config := config.get(CONF_LAMBDA):
         lambda_ = await cg.process_lambda(

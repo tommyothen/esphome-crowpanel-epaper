@@ -70,6 +70,7 @@ display:
 |---|---|---|
 | `grey` | `false` | Full refreshes in four greys instead of the panel's own black and white one (about 3.7 s) |
 | `grey_levels` | `4` | `7` adds a half step between each grey, in three passes; needs `grey` |
+| `temperature_sensor` | none | Any sensor giving the panel's temperature, or near enough: the waveforms run faster in the warm and slower in the cold |
 | `full_update_every` | `30` | Updates per full refresh; `1` makes every update full |
 | `update_interval` | `never` | Most devices decide for themselves when to draw |
 | `rotation` | `0` | |
@@ -128,8 +129,14 @@ one when they move.
   and go into deep sleep, so nothing stays driven between updates.
 - The panel's own full refresh, used when `grey` is off, is its OTP waveform:
   temperature compensated, and the panel maker's to balance.
-- The loaded waveforms are fixed rather than temperature compensated. They
-  were tuned indoors; in the cold, expect slower, paler changes.
+- Particles move faster in the warm and slower in the cold. Given a
+  `temperature_sensor`, the driver runs the self-balanced waveforms at a
+  frame rate for the temperature, which stretches or shrinks every frame
+  alike and leaves their balance untouched, in the panel maker's own bands
+  (below). Fast partials and their cancelling stay at 50 Hz, since a push
+  and the pass that cancels it, perhaps hours later, must match exactly; the
+  maker's own partial waveform does not change with temperature either.
+  Without a sensor, everything runs as tuned, for 13 to 20 °C.
 - A full refresh now and then still helps: it resets the deep blacks and
   clears what partials leave behind. `full_update_every` caps a run of
   partials, across deep sleep too.
@@ -279,6 +286,13 @@ community drivers listed below, and testing on the board.
   value, loaded with 0x22 0xB9, lightened dark grey by 0.06 and every grey by
   about 0.1, so the driver keeps 0x30. The booster's soft start (0x0C) is left
   at its reset value, as Elecrow's firmware leaves it.
+- **Temperature.** Faking the temperature with 0x1A and timing the OTP's
+  own waveforms shows the maker's bands: the full refresh runs 4.50 s at
+  10 °C and below, 3.28 s from 13 to 20 °C, 2.27 s from 22 to 30 °C and
+  1.66 s from 35 °C, while the partial runs 0.43 s at every temperature. The
+  four-grey refresh at 37.5, 50, 75 and 100 Hz runs 4.78, 3.53, 2.35 and
+  1.77 s, the same progression, so the driver switches frame rate at 12, 21
+  and 33 °C.
 - **Read back.** The controllers can report their temperature, RAM and display
   options, but only over the data line, which the board wires to one GPIO as
   an output. Reading would mean bit-banging it.

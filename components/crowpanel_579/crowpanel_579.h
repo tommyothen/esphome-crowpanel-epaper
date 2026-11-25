@@ -1,6 +1,10 @@
 #pragma once
 
 #include "esphome/components/epaper_spi/epaper_spi.h"
+#include "esphome/core/defines.h"
+#ifdef USE_SENSOR
+#include "esphome/components/sensor/sensor.h"
+#endif
 
 namespace esphome::crowpanel_579 {
 
@@ -72,6 +76,10 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   void set_power_pin(InternalGPIOPin *pin) { this->power_pin_ = pin; }
   // The reset pin, held high through deep sleep so the panel stays asleep rather than reset.
   void set_hold_reset_pin(InternalGPIOPin *pin) { this->hold_reset_pin_ = pin; }
+#ifdef USE_SENSOR
+  // The panel's temperature, or near enough, for running the waveforms faster or slower.
+  void set_temperature_sensor(sensor::Sensor *sensor) { this->temperature_ = sensor; }
+#endif
 
   // Where a RAM plane's bytes come from: the buffer through a table from a buffer byte (two pixels)
   // to their two bits, or a bit plane as it is.
@@ -110,8 +118,9 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   // Point one controller's RAM window and address counters at rows first_y to end_y of its half.
   void set_ram_area_(bool left, uint16_t first_y, uint16_t end_y);
   void plane_bytes_(const Source &source, size_t y, size_t offset, size_t count, uint8_t *out);
-  // Load a 233-byte waveform (0x32 and its tail) and run it.
-  void load_waveform_(const uint8_t *waveform);
+  // Load a 233-byte waveform (0x32 and its tail) at a frame rate and run it.
+  void load_waveform_(const uint8_t *waveform, uint8_t frame_rate);
+  uint8_t frame_rate_for_temperature_() const;
   // Send the RAM plane passes from plane_ on, in slices; true once all four are out.
   bool send_planes_(const Source &old_source, const Source &new_source);
   bool find_changed_rows_();
@@ -141,6 +150,10 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   uint8_t init_step_{0};
   bool awake_{false};           // the controllers have been reset and not slept since
   bool supplies_on_{false};     // the ±15 V supplies are on
+  uint8_t frame_rate_{0x02};    // this update's, for its temperature
+#ifdef USE_SENSOR
+  sensor::Sensor *temperature_{nullptr};
+#endif
   uint32_t supplies_since_{0};
   uint8_t plane_{0};            // 0 and 1: 0x26, left then right; 2 and 3: 0x24
   bool sending_{false};         // a plane is part way out

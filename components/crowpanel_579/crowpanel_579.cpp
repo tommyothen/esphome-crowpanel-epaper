@@ -1,6 +1,7 @@
 #include "crowpanel_579.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <initializer_list>
 
@@ -35,6 +36,8 @@ static constexpr uint32_t UPDATE_DEADLINE_MS = 20000;
 // others run a waveform loaded with 0x32, switching the supplies on first if they are off and
 // leaving them on; switching them on or off takes about 0.1 s each.
 static constexpr uint8_t UPDATE_FULL = 0xF7;
+// Frame rates (byte 224 of a waveform). Every waveform here is written for 50 Hz.
+static constexpr uint8_t FRAMES_37_5_HZ = 0x09, FRAMES_50_HZ = 0x02, FRAMES_75_HZ = 0x03, FRAMES_100_HZ = 0x04;
 static constexpr uint8_t UPDATE_SUPPLIES_DISPLAY = 0xCC;
 static constexpr uint8_t UPDATE_DISPLAY = 0x0C;
 static constexpr uint8_t SUPPLIES_OFF = 0x03;
@@ -548,12 +551,34 @@ void CrowPanel579::find_unsettled_rows_() {
   this->end_row_ = first < 0 ? 1 : last + 1;
 }
 
+// Particles move faster in the warm and slower in the cold, so the self-balanced waveforms run at
+// a frame rate for the temperature, which stretches or shrinks every frame alike and leaves their
+// balance as it is. The bands and ratios are the panel maker's: with 0x1A faking the temperature,
+// the OTP's full refresh runs 4.5 s at 10 °C and below, 3.3 s from 13 to 20 °C (where these
+// waveforms were tuned), 2.3 s from 22 to 30 °C and 1.7 s from 35 °C, which 37.5, 50, 75 and 100 Hz
+// match. Without a temperature, 50 Hz.
+uint8_t CrowPanel579::frame_rate_for_temperature_() const {
+#ifdef USE_SENSOR
+  if (this->temperature_ != nullptr && !std::isnan(this->temperature_->state)) {
+    const float celsius = this->temperature_->state;
+    if (celsius < 12)
+      return FRAMES_37_5_HZ;
+    if (celsius >= 33)
+      return FRAMES_100_HZ;
+    if (celsius >= 21)
+      return FRAMES_75_HZ;
+  }
+#endif
+  return FRAMES_50_HZ;
+}
+
 // Decides what an update is, at its first transfer: a partial refresh when the count says so, fast
 // whenever the driver knows what the glass shows, or a full refresh, after cancelling any fast
 // partials' pushes. A partial whose rows are all unchanged has nothing to send or refresh.
 void CrowPanel579::plan_update_() {
   this->pass_count_ = 0;
   this->unchanged_ = false;
+  this->frame_rate_ = this->frame_rate_for_temperature_();
   if (this->update_count_ != 0) {
     if (!this->find_changed_rows_()) {
       this->unchanged_ = true;
@@ -636,26 +661,29 @@ void CrowPanel579::refresh_screen(bool partial) {
   this->cmd_data(0x3C, {grey ? BORDER_GREY : BORDER_PARTIAL});
   this->cmd_data(0x21, {0x00, 0x10});
   switch (pass) {
+    // A fast partial's push may be cancelled hours later at another temperature, so the push, its
+    // cancelling and its settling always run at 50 Hz: a frame's drive has to match exactly.
     case Pass::FAST:
-      this->load_waveform_(ONE_WAY.bytes);
-      break;
-    case Pass::PARTIAL:
-      this->load_waveform_(PARTIAL.bytes);
-      break;
-    case Pass::GREY:
-      this->load_waveform_(GREY_LUT);
-      break;
-    case Pass::HALF_TO_BLACK:
-      this->load_waveform_(HALF_TO_BLACK.bytes);
-      break;
-    case Pass::EVEN_GREY:
-      this->load_waveform_(EVEN_GREY.bytes);
-      break;
-    case Pass::HALF_TO_WHITE:
-      this->load_waveform_(HALF_TO_WHITE.bytes);
+      this->load_waveform_(ONE_WAY.bytes, FRAMES_50_HZ);
       break;
     case Pass::CORRECT:
-      this->load_waveform_(CORRECTION.bytes);
+      this->load_waveform_(CORRECTION.bytes, FRAMES_50_HZ);
+      break;
+    // These balance on their own, or, the half steps, within one update.
+    case Pass::PARTIAL:
+      this->load_waveform_(PARTIAL.bytes, this->frame_rate_);
+      break;
+    case Pass::GREY:
+      this->load_waveform_(GREY_LUT, this->frame_rate_);
+      break;
+    case Pass::HALF_TO_BLACK:
+      this->load_waveform_(HALF_TO_BLACK.bytes, this->frame_rate_);
+      break;
+    case Pass::EVEN_GREY:
+      this->load_waveform_(EVEN_GREY.bytes, this->frame_rate_);
+      break;
+    case Pass::HALF_TO_WHITE:
+      this->load_waveform_(HALF_TO_WHITE.bytes, this->frame_rate_);
       break;
     case Pass::BLACK_WHITE:
       break;
@@ -669,8 +697,11 @@ void CrowPanel579::refresh_screen(bool partial) {
 // settles on its own at anything from 0x20 to 0x30, where the panel's own OTP value lightened
 // dark greys by 0.06 and every grey by about 0.1. The booster's soft start is left at its reset
 // value, as Elecrow's firmware leaves it.
-void CrowPanel579::load_waveform_(const uint8_t *waveform) {
-  this->cmd_data(0x32, waveform, 227);
+void CrowPanel579::load_waveform_(const uint8_t *waveform, uint8_t frame_rate) {
+  uint8_t lut[227];
+  memcpy(lut, waveform, sizeof lut);
+  lut[224] = frame_rate;
+  this->cmd_data(0x32, lut, sizeof lut);
   this->cmd_data(0x3F, {waveform[227]});
   this->cmd_data(0x03, {waveform[228]});
   this->cmd_data(0x04, {waveform[229], waveform[230], waveform[231]});
@@ -854,7 +885,7 @@ void CrowPanel579::settle_now_() {
   }
   this->cmd_data(0x3C, {BORDER_PARTIAL});
   this->cmd_data(0x21, {0x00, 0x10});
-  this->load_waveform_(SETTLE.bytes);
+  this->load_waveform_(SETTLE.bytes, FRAMES_50_HZ);
   this->command(0x20);
   this->wait_idle_(3000);
   while (!this->send_planes_(Source{nullptr, this->glass_}, Source{nullptr, this->glass_})) {
