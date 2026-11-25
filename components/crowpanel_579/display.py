@@ -62,7 +62,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_POWER_PIN, default="GPIO7"): pins.internal_gpio_output_pin_schema,
             # Partial refreshes between full ones, which clear the ghosting.
             cv.Optional(CONF_FULL_UPDATE_EVERY, default=30): cv.int_range(1, 255),
-            # Full refreshes in four greys (about 4.1 s) instead of the panel's own
+            # Full refreshes in four greys (about 3.9 s) instead of the panel's own
             # black and white (about 3.7 s). Partial refreshes stay black and white.
             cv.Optional(CONF_GREY, default=False): cv.boolean,
             # 7 runs each grey refresh in three passes, with a half step between each of the

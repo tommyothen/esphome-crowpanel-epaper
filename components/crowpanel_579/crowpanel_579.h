@@ -56,7 +56,10 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   // Full refreshes use loaded grey waveforms instead of the panel's black and white one.
   void set_grey(bool grey) { this->grey_ = grey; }
   // 4, or 7 for three-pass grey refreshes with a half step between each of the four greys.
-  void set_grey_levels(uint8_t levels) { this->seven_ = levels == 7; }
+  void set_grey_levels(uint8_t levels) {
+    this->seven_ = levels == 7;
+    this->last_colour_ = UINT32_MAX;  // levels map differently now
+  }
   // The pin that switches the panel's power, held high through deep sleep.
   void set_power_pin(InternalGPIOPin *pin) { this->power_pin_ = pin; }
   // The reset pin, held high through deep sleep so the panel stays asleep rather than reset.
@@ -100,6 +103,9 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   bool copying_{false};           // writing the black and white reading to both planes
   bool reset_sent_{false};
   bool awake_{false};  // the controllers have been reset and not slept since
+  uint8_t *pixels_{nullptr};          // the buffer, when it is one block
+  uint32_t last_colour_{UINT32_MAX};  // draw_pixel_at's last colour and its level
+  uint8_t last_level_{0};
   uint8_t plane_{0};  // 0 and 1: 0x26, left then right; 2 and 3: 0x24
 };
 

@@ -234,6 +234,10 @@ void CrowPanel579::setup() {
   hold(this->hold_reset_pin_, false);
   if (this->is_failed())
     return;
+  // With PSRAM the buffer is one block, and drawing indexes it directly.
+  size_t length = 0;
+  uint8_t *pixels = this->buffer_.get_span(0, length);
+  this->pixels_ = length == this->buffer_length_ ? pixels : nullptr;
   // Waking from deep sleep, the panel kept its power, its picture and its RAM, so the count
   // carries on and the first update can be partial.
   if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_UNDEFINED && this->is_using_partial_update_()) {
@@ -284,8 +288,14 @@ void CrowPanel579::fill(Color color) {
 void HOT CrowPanel579::draw_pixel_at(int x, int y, Color color) {
   if (!this->rotate_coordinates_(x, y))
     return;
-  uint8_t &pair = this->buffer_[y * this->row_width_ + x / 2];
-  const uint8_t level = this->level_(color);
+  // A rectangle or a run of text is one colour, so its level is worked out once.
+  if (color.raw_32 != this->last_colour_) {
+    this->last_colour_ = color.raw_32;
+    this->last_level_ = this->level_(color);
+  }
+  const size_t index = y * this->row_width_ + x / 2;
+  uint8_t &pair = this->pixels_ != nullptr ? this->pixels_[index] : this->buffer_[index];
+  const uint8_t level = this->last_level_;
   pair = (x & 1) ? (pair & 0xF0) | level : (pair & 0x0F) | level << 4;  // the first pixel in the high nibble
 }
 
@@ -339,7 +349,14 @@ void CrowPanel579::set_ram_area_(bool left) {
 
 void HOT CrowPanel579::plane_half_(size_t y, size_t offset, const uint8_t *bits, uint8_t *out) {
   // Plane byte offset + i holds the 8 pixels of buffer bytes 4 (offset + i) to the third after.
-  const uint8_t *in = &this->buffer_[y * this->row_width_ + 4 * offset];
+  const size_t start = y * this->row_width_ + 4 * offset;
+  uint8_t copy[4 * HALF];
+  const uint8_t *in = this->pixels_ + start;
+  if (this->pixels_ == nullptr) {
+    for (size_t i = 0; i != sizeof copy; i++)
+      copy[i] = this->buffer_[start + i];
+    in = copy;
+  }
   for (size_t i = 0; i != HALF; i++, in += 4)
     out[i] = bits[in[0]] << 6 | bits[in[1]] << 4 | bits[in[2]] << 2 | bits[in[3]];
 }

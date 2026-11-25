@@ -6,7 +6,7 @@ controllers in cascade. The 4.2" comes next.
 
 - Partial refreshes in about 1 s that drive only the pixels that change, so
   greys elsewhere on the screen survive any number of them.
-- Four greys in about 4.1 s: Waveshare's grey waveform with the particle
+- Four greys in about 3.9 s: Waveshare's grey waveform with the particle
   shaking cut from five rounds to one, which saves 1.8 s and leaves the greys
   measuring the same. Or seven, in three passes and about 4.7 s.
 - Every waveform the driver loads is balanced: each pixel spends as long
