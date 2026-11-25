@@ -10,7 +10,8 @@ controllers in cascade. The 4.2" comes next.
   that changed, and when nothing did, the panel is not driven at all.
 - Four greys in about 3.9 s: Waveshare's grey waveform with the particle
   shaking cut from five rounds to one, which saves 1.8 s and leaves the greys
-  measuring the same. Or seven, in three passes and about 4.7 s.
+  measuring the same. Or seven, evenly spaced, in three passes and about
+  4.3 s.
 - Every pixel's drive stays balanced: as long one way as the other, so
   nothing builds up in the panel however long it runs. Most refreshes balance
   on their own; the fast partials are tracked a pixel at a time and cancelled.
@@ -267,15 +268,20 @@ community drivers listed below, and testing on the board.
   datasheet asks for 0x22, which discharges them, and the greys look the same.
 - **Seven greys.** Each pixel's RAM bits pick one of four waveforms, so one
   refresh gives four greys at most. A seven-grey refresh runs three: a half
-  step towards black for the odd levels (4
-  frames up from black, 1 from dark grey, 2 from light, since a grey answers
-  a push by how dark it is), the four greys with dark and light driven less
-  so they sit evenly apart, and the same half step towards white. The two
-  half steps cancel, and the middle pass balances on its own. Measured
-  against flat white and black frames, the seven read 0.01, 0.18, 0.45,
-  0.58, 0.69, 0.86 and 1.00, and partials over them changed none by more
-  than 0.02. The camera sees a strong lamp gradient across the panel, so
-  every reading here is corrected against flat frames.
+  step towards black for levels 2, 3 and 5, a four-grey refresh that draws
+  black, dark grey (levels 1 to 3), light grey (levels 4 and 5) and white, and
+  the same half step towards white. The two half steps cancel, and the middle
+  pass balances on its own. Where a table lands hangs on its last few frames:
+  the dark table with 15 frames of black drive lands at 0.46, and with 2 more
+  frames of black at the very end at 0.12, so the middle pass makes dark grey
+  level 1 directly, at 0.20, and the half steps carry levels 2 and 3 up from
+  it. They run at 125 Hz, 8 ms a frame, since one 20 ms frame moves a grey too
+  far: 2, 4 and 3 frames for levels 2, 3 and 5. Measured against flat white
+  and black frames, the seven read 0.02, 0.19, 0.30, 0.52, 0.71, 0.82 and
+  0.99, within 0.04 of even steps (the first try was 0.01, 0.18, 0.47, 0.61,
+  0.71, 0.87 and 1.00), and partials over them changed none by more than
+  0.01. The camera sees a strong lamp gradient across the panel, so every
+  reading here is corrected against flat frames.
 - **Keeping the supplies on.** 0x22 0xCC switches the supplies on and runs
   the loaded waveform, leaving them on; 0x0C runs it with them already on;
   0x03 switches them off. Each switch takes about 0.1 s. GxEPD2 leaves them
@@ -335,8 +341,6 @@ Each frame is about 20 ms. None of them left a ghost of the frame before.
 
 ### Still open
 
-- Dark grey in the seven-grey ramp reads 0.47, where an even ramp wants
-  0.33: its table could take a little more drive.
 - Thirteen greys: two more half-step passes, quarter steps, each band with its
   own length. One length for every band crosses the levels over.
 - A faster grey: shortening group 2 and nudging its phases to win the greys

@@ -37,7 +37,8 @@ static constexpr uint32_t UPDATE_DEADLINE_MS = 20000;
 // leaving them on; switching them on or off takes about 0.1 s each.
 static constexpr uint8_t UPDATE_FULL = 0xF7;
 // Frame rates (byte 224 of a waveform). Every waveform here is written for 50 Hz.
-static constexpr uint8_t FRAMES_37_5_HZ = 0x09, FRAMES_50_HZ = 0x02, FRAMES_75_HZ = 0x03, FRAMES_100_HZ = 0x04;
+static constexpr uint8_t FRAMES_37_5_HZ = 0x09, FRAMES_50_HZ = 0x02, FRAMES_75_HZ = 0x03, FRAMES_100_HZ = 0x04,
+                         FRAMES_125_HZ = 0x05;
 static constexpr uint8_t UPDATE_SUPPLIES_DISPLAY = 0xCC;
 static constexpr uint8_t UPDATE_DISPLAY = 0x0C;
 static constexpr uint8_t SUPPLIES_OFF = 0x03;
@@ -127,36 +128,47 @@ struct PartialWaveform {
 static constexpr PartialWaveform PARTIAL{};
 
 // The seven-grey refresh's middle pass: the four-grey waveform with its dark and light tables
-// driven less, so dark grey stands clear of black and a half step fits between each grey. The
-// dark table becomes the light one above, 15 frames of black drive; the light table gets 10,
-// balanced by 10 frames of white first.
+// driven less. The level a table lands on hangs on its last few frames: on the camera, the dark
+// table with 15 frames of black drive lands at 0.46, and the same with 2 more frames of black at
+// the very end at 0.12. Here dark grey is level 1 of the seven, 0.20: 15 frames, then 4 frames of
+// black and 2 back to white at the end, balanced by a frame of white either side of the shake's
+// white. Light grey is level 4, 0.72: 10 frames of black drive, balanced by 10 of white first.
 struct EvenGreyWaveform {
   uint8_t bytes[233];
   constexpr EvenGreyWaveform() : bytes() {
     for (int i = 0; i < 233; i++)
       bytes[i] = GREY_LUT[i];
     constexpr int BW = 84, WB = 126;  // the light and dark tables
-    for (int i = 0; i < 42; i++)
-      bytes[WB + i] = GREY_LUT[BW + i];
-    constexpr uint8_t group0[4] = {0x8A, 0x1B, 0x0F, 0x03}, group2[4] = {0x48, 0x03, 0x82, 0x84};
-    for (int i = 0; i < 4; i++) {
-      bytes[BW + 1 + i] = group0[i];
-      bytes[BW + 14 + 1 + i] = group2[i];
+    // Phases A to D of groups 0 to 3, each table: VSS, VSH1 (0x40) or VSL (0x80), and the length.
+    constexpr uint8_t dark[4][4] = {
+        {0x0A, 0x1B, 0x8F, 0x03}, {0x4A, 0x81, 0x8A, 0x81}, {0x48, 0x83, 0x82, 0x04}, {0x04, 0x44, 0x82, 0x00}};
+    constexpr uint8_t light[4][4] = {
+        {0x8A, 0x1B, 0x0F, 0x03}, {0x4A, 0x01, 0x8A, 0x01}, {0x48, 0x03, 0x82, 0x84}, {0x04, 0x04, 0x02, 0x00}};
+    for (int g = 0; g < 4; g++) {
+      for (int p = 0; p < 4; p++) {
+        bytes[WB + g * 7 + 1 + p] = dark[g][p];
+        bytes[BW + g * 7 + 1 + p] = light[g][p];
+      }
     }
   }
 };
 static constexpr EvenGreyWaveform EVEN_GREY{};
 
-// The seven-grey refresh's outer passes: a half step for the odd levels, towards black before the
-// middle pass and towards white after it, so the two cancel. A grey answers a push by how dark it
-// is, so each band gets its own length: 4 frames up from black, 1 from dark grey, 2 from light.
-// The pixel's two RAM bits say which: 0 none (BB), 1 from black (WB), 2 from dark (BW), 3 from
-// light (WW).
+// The seven-grey refresh's outer passes: a half step, towards black before the middle pass and
+// towards white after it, so the two cancel. The pixel's two RAM bits say which: none (BB), level
+// 2 from dark grey (WB), level 3 from dark grey (BW) or level 5 from light grey (WW). They run at
+// 125 Hz, 8 ms a frame, since a single 20 ms frame moves a grey too far: at room temperature 2, 4
+// and 3 frames land levels 2, 3 and 5 at 0.32, 0.53 and 0.84. The middle pass runs faster in the
+// warm and slower in the cold, so these scale with it, one set of lengths for each band.
 struct HalfStepWaveform {
   uint8_t bytes[233];
-  constexpr HalfStepWaveform(bool white) : bytes() {
-    constexpr uint8_t lengths[3] = {1, 1, 2};  // phases A, B and C
-    constexpr uint8_t phases_of_table[5] = {0, 0b011, 0b001, 0b111, 0};  // VCOM, WW, BW, WB, BB
+  constexpr HalfStepWaveform(bool white, uint8_t level_2, uint8_t level_3, uint8_t level_5) : bytes() {
+    // Phase A is level 2's length; B and C add what levels 3 and 5 need beyond it.
+    const uint8_t shorter = level_3 < level_5 ? level_3 : level_5, longer = level_3 < level_5 ? level_5 : level_3;
+    const uint8_t lengths[3] = {level_2, static_cast<uint8_t>(shorter - level_2),
+                                static_cast<uint8_t>(longer - shorter)};
+    const uint8_t phases_3 = level_3 == longer ? 0b111 : 0b011, phases_5 = level_5 == longer ? 0b111 : 0b011;
+    const uint8_t phases_of_table[5] = {0, phases_5, phases_3, 0b001, 0};  // VCOM, WW, BW, WB, BB
     const uint8_t drive = white ? 0x80 : 0x40;
     for (int t = 0; t < 5; t++) {
       bytes[t * 42] = 1;
@@ -165,12 +177,16 @@ struct HalfStepWaveform {
       bytes[t * 42 + 5] = 1;
       bytes[t * 42 + 6] = 1;
     }
-    bytes[224] = GREY_LUT[224];
+    bytes[224] = 0x05;  // 125 Hz
     for (int i = 227; i < 233; i++)
       bytes[i] = GREY_LUT[i];
   }
 };
-static constexpr HalfStepWaveform HALF_TO_BLACK{false}, HALF_TO_WHITE{true};
+// For the temperature bands at 37.5, 50, 75 and 100 Hz: the room-temperature lengths scaled.
+static constexpr HalfStepWaveform HALF_TO_BLACK[4] = {
+    {false, 3, 5, 4}, {false, 2, 4, 3}, {false, 1, 3, 2}, {false, 1, 2, 2}};
+static constexpr HalfStepWaveform HALF_TO_WHITE[4] = {
+    {true, 3, 5, 4}, {true, 2, 4, 3}, {true, 1, 3, 2}, {true, 1, 2, 2}};
 
 // The waveforms of an active spell, while updates come quickly: group 0 only, with phases A to C
 // of the given lengths and, for each table, the level in each phase (0 none, 1 VSH1, black,
@@ -244,7 +260,11 @@ static constexpr bool balanced(std::initializer_list<const uint8_t *> waveforms)
 static_assert(balanced({PARTIAL.bytes}), "the partial waveform must leave no net drive on a pixel");
 static_assert(balanced({GREY_LUT}), "the grey waveform must leave no net drive on a pixel");
 static_assert(balanced({EVEN_GREY.bytes}), "the even grey waveform must leave no net drive on a pixel");
-static_assert(balanced({HALF_TO_BLACK.bytes, HALF_TO_WHITE.bytes}), "the half steps must cancel");
+static_assert(balanced({HALF_TO_BLACK[0].bytes, HALF_TO_WHITE[0].bytes}) &&
+                  balanced({HALF_TO_BLACK[1].bytes, HALF_TO_WHITE[1].bytes}) &&
+                  balanced({HALF_TO_BLACK[2].bytes, HALF_TO_WHITE[2].bytes}) &&
+                  balanced({HALF_TO_BLACK[3].bytes, HALF_TO_WHITE[3].bytes}),
+              "the half steps must cancel");
 
 // A white pixel out of balance got there by a fast partial's push towards white (WB), a black one
 // by its push towards black (BW); cancelling and settling must undo exactly that, and touch
@@ -263,10 +283,13 @@ static_assert(cancels(SETTLE.bytes), "settling must undo a fast partial's push e
 
 // For each RAM bit a refresh needs, the levels (0 to 6) that set it, and from that a table from a
 // buffer byte, two pixels with the first in the high nibble, to their two bits.
-static constexpr uint8_t WHITE = 0b1110000;      // levels 4 to 6: a partial's reading, and level / 2's high bit
-static constexpr uint8_t GREY_LOW = 0b1001100;   // levels 2, 3 and 6: level / 2's low bit
+static constexpr uint8_t WHITE = 0b1110000;      // levels 4 to 6: a partial's reading, and the grey's high bit
+// The middle pass makes levels 0, 1, 4 and 6 directly (black, dark grey, light grey, white) and
+// levels 2, 3 and 5 as dark, dark and light grey before their half steps; with four greys only
+// the even levels are drawn, and level 2 is dark grey.
+static constexpr uint8_t GREY_LOW = 0b1001110;   // levels 1, 2, 3 and 6: dark grey or white
 static constexpr uint8_t HALF_HIGH = 0b0101000;  // levels 3 and 5: the half step's high bit
-static constexpr uint8_t HALF_LOW = 0b0100010;   // levels 1 and 5: the half step's low bit
+static constexpr uint8_t HALF_LOW = 0b0100100;   // levels 2 and 5: the half step's low bit
 struct PlaneBits {
   uint8_t table[256];
   constexpr PlaneBits(uint8_t levels) : table() {
@@ -575,6 +598,20 @@ uint8_t CrowPanel579::frame_rate_for_temperature_() const {
   return FRAMES_50_HZ;
 }
 
+// The temperature band of this update's frame rate, coldest first.
+int CrowPanel579::band_() const {
+  switch (this->frame_rate_) {
+    case FRAMES_37_5_HZ:
+      return 0;
+    case FRAMES_75_HZ:
+      return 2;
+    case FRAMES_100_HZ:
+      return 3;
+    default:
+      return 1;
+  }
+}
+
 // Decides what an update is, at its first transfer: a partial refresh when the count says so, fast
 // whenever the driver knows what the glass shows, or a full refresh, after cancelling any fast
 // partials' pushes. A partial whose rows are all unchanged has nothing to send or refresh.
@@ -680,13 +717,13 @@ void CrowPanel579::refresh_screen(bool partial) {
       this->load_waveform_(GREY_LUT, this->frame_rate_);
       break;
     case Pass::HALF_TO_BLACK:
-      this->load_waveform_(HALF_TO_BLACK.bytes, this->frame_rate_);
+      this->load_waveform_(HALF_TO_BLACK[this->band_()].bytes, FRAMES_125_HZ);
       break;
     case Pass::EVEN_GREY:
       this->load_waveform_(EVEN_GREY.bytes, this->frame_rate_);
       break;
     case Pass::HALF_TO_WHITE:
-      this->load_waveform_(HALF_TO_WHITE.bytes, this->frame_rate_);
+      this->load_waveform_(HALF_TO_WHITE[this->band_()].bytes, FRAMES_125_HZ);
       break;
     case Pass::BLACK_WHITE:
       break;

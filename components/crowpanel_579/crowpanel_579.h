@@ -35,9 +35,9 @@ namespace esphome::crowpanel_579 {
  *  - cancelling and settling read which pixels are out of balance from 0x26, and what the
  *    glass shows from 0x24;
  *  - a four-grey one takes level / 2 as two bits, high in 0x26 and low in 0x24;
- *  - a seven-grey one runs three passes: a half step towards black for the odd levels, the
- *    four-grey refresh of level / 2, and the same half step towards white, so every pixel's
- *    drive still nets to nothing;
+ *  - a seven-grey one runs three passes: a half step towards black for levels 2, 3 and 5, a
+ *    four-grey refresh that draws levels 1 to 3 as dark grey and 4 and 5 as light grey, and the
+ *    same half step towards white, so every pixel's drive still nets to nothing;
  *  - with grey off, a full refresh is the panel's own black and white one.
  * Colours follow epaper_spi: Color::BLACK is ink, Color::WHITE is paper.
  *
@@ -121,6 +121,7 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   // Load a 233-byte waveform (0x32 and its tail) at a frame rate and run it.
   void load_waveform_(const uint8_t *waveform, uint8_t frame_rate);
   uint8_t frame_rate_for_temperature_() const;
+  int band_() const;
   // Send the RAM plane passes from plane_ on, in slices; true once all four are out.
   bool send_planes_(const Source &old_source, const Source &new_source);
   bool find_changed_rows_();
