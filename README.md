@@ -8,7 +8,7 @@ controllers in cascade. The 4.2" comes next.
   greys elsewhere on the screen survive any number of them.
 - Four greys in about 4.1 s: Waveshare's grey waveform with the particle
   shaking cut from five rounds to one, which saves 1.8 s and leaves the greys
-  measuring the same.
+  measuring the same. Or seven, in three passes and about 5.3 s.
 - Every waveform the driver loads is balanced: each pixel spends as long
   driven one way as the other on every refresh, so nothing builds up in the
   panel however long it runs. The build checks this, so a change that breaks
@@ -18,8 +18,8 @@ controllers in cascade. The 4.2" comes next.
   flash, and `full_update_every` keeps counting across wakes.
 - Nothing blocks. It builds on `EPaperBase` from ESPHome's `epaper_spi`, so
   BUSY is polled from `loop()` and data goes out in 10 ms slices.
-- One 54 KB frame buffer, 2 bits a pixel. The panel's own RAM holds the
-  previous frame, so there is no second copy.
+- One 108 KB frame buffer, 4 bits a pixel, in PSRAM. The panel's own RAM
+  holds the previous frame, so there is no second copy.
 
 Tested with ESPHome 2026.10. `epaper_spi`'s base class changes between
 releases, so older versions may not build it.
@@ -66,6 +66,7 @@ display:
 | Option | Default | |
 |---|---|---|
 | `grey` | `false` | Full refreshes in four greys instead of the panel's own black and white one (about 3.7 s) |
+| `grey_levels` | `4` | `7` adds a half step between each grey, in three passes; needs `grey` |
 | `full_update_every` | `30` | Updates per full refresh; `1` makes every update full |
 | `update_interval` | `never` | Most devices decide for themselves when to draw |
 | `rotation` | `0` | |
@@ -80,7 +81,12 @@ ESPHome's own e-paper displays.
 
 Draw with `Color::BLACK` on the white paper. Colours map to four levels by
 luma: below 64 is black, below 128 dark grey, below 192 light grey, the rest
-white. Fonts with `bpp: 2` give anti-aliased text on a grey refresh.
+white. Fonts with `bpp: 2` give anti-aliased text on a grey refresh. With
+`grey_levels: 7`, luma maps to seven even steps, and `bpp: 4` fonts use them.
+
+The four greys keep Waveshare's spacing, where dark grey sits close to black,
+which makes anti-aliased text look bold. Seven greys space the four evenly
+first, so dark grey stands clear of black, then add the half steps.
 
 Partial refreshes are black and white and drive only the pixels whose black
 or white reading changes. Greys elsewhere stay exactly as the last grey
@@ -193,6 +199,17 @@ community drivers listed below, and testing on the board.
   0x26 and its low bit to 0x24, 11 white and 00 black. Its end option is 0x07,
   which leaves the pixels charged to the last phase (+15 V on black); the
   datasheet asks for 0x22, which discharges them, and the greys look the same.
+- **Seven greys.** Each pixel's RAM bits pick one of four waveforms, so one
+  refresh gives four greys at most. A seven-grey refresh runs three, each
+  after its own reset: a half step towards black for the odd levels (4
+  frames up from black, 1 from dark grey, 2 from light, since a grey answers
+  a push by how dark it is), the four greys with dark and light driven less
+  so they sit evenly apart, and the same half step towards white. The two
+  half steps cancel, and the middle pass balances on its own. Measured
+  against flat white and black frames, the seven read 0.01, 0.21, 0.47,
+  0.58, 0.70, 0.85 and 0.99, and four partials over them changed none by more
+  than 0.02. The camera sees a strong lamp gradient across the panel, so
+  every reading here is corrected against flat frames.
 - **Read back.** The controllers can report their temperature, RAM and display
   options, but only over the data line, which the board wires to one GPIO as
   an output. Reading would mean bit-banging it.
@@ -224,8 +241,10 @@ Each frame is about 20 ms. None of them left a ghost of the frame before.
 
 ### Still open
 
-- More greys: a second, short balanced pass after the grey refresh could
-  split each level in four.
+- Dark grey in the seven-grey ramp reads 0.47, where an even ramp wants
+  0.33: its table could take a little more drive.
+- Thirteen greys: two more half-step passes, quarter steps, each band with its
+  own length. One length for every band crosses the levels over.
 - A faster grey: shortening group 2 and nudging its phases to win the greys
   back.
 

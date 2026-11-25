@@ -1,6 +1,7 @@
 #include "crowpanel_579.h"
 
 #include <cstring>
+#include <initializer_list>
 
 #include <driver/gpio.h>
 #include <esp_sleep.h>
@@ -104,38 +105,107 @@ struct PartialWaveform {
 };
 static constexpr PartialWaveform PARTIAL{};
 
-// Whether a loaded waveform leaves no net drive on any pixel: VCOM stays at its DC level, VSH1 and
-// VSL are +15 V and -15 V, and every pixel table spends as many frames at one as at the other,
-// counting the group and state repeats. VSH2 counts as unbalanced, since nothing here uses it.
-static constexpr bool balanced(const uint8_t *waveform) {
+// The seven-grey refresh's middle pass: the four-grey waveform with its dark and light tables
+// driven less, so dark grey stands clear of black and a half step fits between each grey. The
+// dark table becomes the light one above, 15 frames of black drive; the light table gets 10,
+// balanced by 10 frames of white first.
+struct EvenGreyWaveform {
+  uint8_t bytes[233];
+  constexpr EvenGreyWaveform() : bytes() {
+    for (int i = 0; i < 233; i++)
+      bytes[i] = GREY_LUT[i];
+    constexpr int BW = 84, WB = 126;  // the light and dark tables
+    for (int i = 0; i < 42; i++)
+      bytes[WB + i] = GREY_LUT[BW + i];
+    constexpr uint8_t group0[4] = {0x8A, 0x1B, 0x0F, 0x03}, group2[4] = {0x48, 0x03, 0x82, 0x84};
+    for (int i = 0; i < 4; i++) {
+      bytes[BW + 1 + i] = group0[i];
+      bytes[BW + 14 + 1 + i] = group2[i];
+    }
+  }
+};
+static constexpr EvenGreyWaveform EVEN_GREY{};
+
+// The seven-grey refresh's outer passes: a half step for the odd levels, towards black before the
+// middle pass and towards white after it, so the two cancel. A grey answers a push by how dark it
+// is, so each band gets its own length: 4 frames up from black, 1 from dark grey, 2 from light.
+// The pixel's two RAM bits say which: 0 none (BB), 1 from black (WB), 2 from dark (BW), 3 from
+// light (WW).
+struct HalfStepWaveform {
+  uint8_t bytes[233];
+  constexpr HalfStepWaveform(bool white) : bytes() {
+    constexpr uint8_t lengths[3] = {1, 1, 2};  // phases A, B and C
+    constexpr uint8_t phases_of_table[5] = {0, 0b011, 0b001, 0b111, 0};  // VCOM, WW, BW, WB, BB
+    const uint8_t drive = white ? 0x80 : 0x40;
+    for (int t = 0; t < 5; t++) {
+      bytes[t * 42] = 1;
+      for (int p = 0; p < 3; p++)
+        bytes[t * 42 + 1 + p] = (((phases_of_table[t] >> p) & 1) ? drive : 0) | lengths[p];
+      bytes[t * 42 + 5] = 1;
+      bytes[t * 42 + 6] = 1;
+    }
+    bytes[224] = GREY_LUT[224];
+    for (int i = 227; i < 233; i++)
+      bytes[i] = GREY_LUT[i];
+  }
+};
+static constexpr HalfStepWaveform HALF_TO_BLACK{false}, HALF_TO_WHITE{true};
+
+// The net drive a waveform leaves on pixels using table t, in frames: VSH1 counts one way and VSL
+// the other, with the group and state repeats. Returns a value far from 0 for anything this driver
+// should never send: VSH2, a VCOM table that leaves its DC level, or VSH1 and VSL other than
+// +15 V and -15 V.
+static constexpr int net_drive(const uint8_t *waveform, int t) {
+  constexpr int INVALID = 1 << 20;
   if (waveform[229] != 0x41 || waveform[231] != 0x32)
-    return false;
+    return INVALID;
+  int net = 0;
+  for (int g = 0; g < 6; g++) {
+    const uint8_t *group = waveform + t * 42 + g * 7;
+    for (int pair = 0; pair < 2; pair++) {
+      int frames = 0;
+      for (int i = 0; i < 2; i++) {
+        const int level = group[1 + 2 * pair + i] >> 6, length = group[1 + 2 * pair + i] & 0x3F;
+        if (level == 3 || (t == 0 && level != 0))
+          return INVALID;
+        frames += level == 1 ? length : level == 2 ? -length : 0;
+      }
+      net += frames * group[5 + pair] * group[0];
+    }
+  }
+  return net;
+}
+// Whether the waveforms run in turn leave no net drive on any pixel.
+static constexpr bool balanced(std::initializer_list<const uint8_t *> waveforms) {
   for (int t = 0; t < 5; t++) {
     int net = 0;
-    for (int g = 0; g < 6; g++) {
-      const uint8_t *group = waveform + t * 42 + g * 7;
-      for (int pair = 0; pair < 2; pair++) {
-        int frames = 0;
-        for (int i = 0; i < 2; i++) {
-          const int level = group[1 + 2 * pair + i] >> 6, length = group[1 + 2 * pair + i] & 0x3F;
-          if (level == 3 || (t == 0 && level != 0))
-            return false;
-          frames += level == 1 ? length : level == 2 ? -length : 0;
-        }
-        net += frames * group[5 + pair] * group[0];
-      }
-    }
+    for (const uint8_t *waveform : waveforms)
+      net += net_drive(waveform, t);
     if (net != 0)
       return false;
   }
   return true;
 }
-static_assert(balanced(GREY_LUT), "the grey waveform must leave no net drive on a pixel");
-static_assert(balanced(PARTIAL.bytes), "the partial waveform must leave no net drive on a pixel");
+static_assert(balanced({PARTIAL.bytes}), "the partial waveform must leave no net drive on a pixel");
+static_assert(balanced({GREY_LUT}), "the grey waveform must leave no net drive on a pixel");
+static_assert(balanced({EVEN_GREY.bytes}), "the even grey waveform must leave no net drive on a pixel");
+static_assert(balanced({HALF_TO_BLACK.bytes, HALF_TO_WHITE.bytes}), "the half steps must cancel");
 
-// A grey level from 0 (black) to 3 (white), in even steps of luma so anti-aliased text, which
-// blends at 0, 85, 170 and 255, keeps all four.
-static uint8_t grey_level(Color color) { return epaper_spi::rec601_luma(color) >> 6; }
+// For each RAM bit a refresh needs, the levels (0 to 6) that set it, and from that a table from a
+// buffer byte, two pixels with the first in the high nibble, to their two bits.
+static constexpr uint8_t WHITE = 0b1110000;       // levels 4 to 6: a partial's reading, and level / 2's high bit
+static constexpr uint8_t GREY_LOW = 0b1001100;    // levels 2, 3 and 6: level / 2's low bit
+static constexpr uint8_t HALF_HIGH = 0b0101000;   // levels 3 and 5: the half step's high bit
+static constexpr uint8_t HALF_LOW = 0b0100010;    // levels 1 and 5: the half step's low bit
+struct PlaneBits {
+  uint8_t table[256];
+  constexpr PlaneBits(uint8_t levels) : table() {
+    for (int v = 0; v < 256; v++)
+      table[v] = (((levels >> (v >> 4)) & 1) << 1) | ((levels >> (v & 0x0F)) & 1);
+  }
+};
+static constexpr PlaneBits WHITE_BITS{WHITE}, GREY_LOW_BITS{GREY_LOW}, HALF_HIGH_BITS{HALF_HIGH},
+    HALF_LOW_BITS{HALF_LOW};
 
 // Where the last update left the full_update_every count, kept through deep sleep so the count
 // carries on across wakes. Only read on a wake from deep sleep, so it is always one this
@@ -169,16 +239,17 @@ void CrowPanel579::setup() {
   }
 }
 
-// Before a deep sleep: finish sending the planes if a partial refresh has just run, then sleep
-// the controllers and hold the panel's power and reset pins high so it keeps its RAM.
+// Before a deep sleep: finish writing the planes if a refresh has just run, then sleep the
+// controllers and hold the panel's power and reset pins high so it keeps its RAM.
 void CrowPanel579::on_safe_shutdown() {
-  while (this->copying_ && !this->send_planes_(false)) {
+  while (this->copying_ && !this->send_planes_(WHITE_BITS.table, WHITE_BITS.table)) {
   }
   this->copying_ = false;
-  // An update cut short before its refresh and that copy may leave the panel's RAM out of step
-  // with the glass, so the next wake starts with a full refresh.
+  // An update cut short, a seven-grey one between passes included, may leave the panel's RAM out
+  // of step with the glass, so the next wake starts with a full refresh.
   using epaper_spi::EPaperState;
-  const bool settled = this->state_ == EPaperState::IDLE || this->state_ == EPaperState::DEEP_SLEEP;
+  const bool settled =
+      !this->next_pass_ && (this->state_ == EPaperState::IDLE || this->state_ == EPaperState::DEEP_SLEEP);
   slept_update_count = settled ? this->update_count_ : 0;
   this->deep_sleep();
   hold(this->power_pin_, true);
@@ -186,12 +257,20 @@ void CrowPanel579::on_safe_shutdown() {
   gpio_deep_sleep_hold_en();
 }
 
+// Four greys use the even levels, in even steps of luma so anti-aliased text, which blends at
+// 0, 85, 170 and 255, keeps all four. Seven use every level.
+uint8_t CrowPanel579::level_(Color color) const {
+  const uint8_t luma = epaper_spi::rec601_luma(color);
+  return this->seven_ ? luma * 7 / 256 : (luma >> 6) * 2;
+}
+
 void CrowPanel579::fill(Color color) {
   if (this->get_clipping().is_set()) {
     display::Display::fill(color);  // the clipped rectangle, a pixel at a time
     return;
   }
-  this->buffer_.fill(grey_level(color) * 0x55);  // the level in all four pixels of a byte
+  const uint8_t level = this->level_(color);
+  this->buffer_.fill(level << 4 | level);
   this->x_low_ = 0;
   this->y_low_ = 0;
   this->x_high_ = this->width_;
@@ -201,10 +280,9 @@ void CrowPanel579::fill(Color color) {
 void HOT CrowPanel579::draw_pixel_at(int x, int y, Color color) {
   if (!this->rotate_coordinates_(x, y))
     return;
-  const size_t index = y * this->row_width_ + x / 4;
-  const uint8_t shift = 6 - 2 * (x % 4);  // the first pixel in the top bits
-  const uint8_t kept = this->buffer_[index] & ~(0x03 << shift);
-  this->buffer_[index] = kept | (grey_level(color) << shift);
+  uint8_t &pair = this->buffer_[y * this->row_width_ + x / 2];
+  const uint8_t level = this->level_(color);
+  pair = (x & 1) ? (pair & 0xF0) | level : (pair & 0x0F) | level << 4;  // the first pixel in the high nibble
 }
 
 bool CrowPanel579::reset() {
@@ -243,36 +321,21 @@ void CrowPanel579::set_ram_area_(bool left) {
   this->cmd_data(0x4F | to, {0x00, 0x00});
 }
 
-// A buffer byte is four pixels of two bits; these give its four high bits, or its four low
-// bits, as a nibble, first pixel in the top bit.
-struct Nibbles {
-  uint8_t high[256], low[256];
-  constexpr Nibbles() : high(), low() {
-    for (int v = 0; v < 256; v++) {
-      high[v] = ((v >> 4) & 8) | ((v >> 3) & 4) | ((v >> 2) & 2) | ((v >> 1) & 1);
-      low[v] = ((v >> 3) & 8) | ((v >> 2) & 4) | ((v >> 1) & 2) | (v & 1);
-    }
-  }
-};
-static constexpr Nibbles NIBBLES{};
-
-void HOT CrowPanel579::plane_half_(size_t y, size_t offset, bool high, uint8_t *out) {
-  const uint8_t *table = high ? NIBBLES.high : NIBBLES.low;
-  // Plane byte offset + i holds the 8 pixels of buffer bytes 2 (offset + i) and the next.
-  size_t index = y * this->row_width_ + 2 * offset;
-  for (size_t i = 0; i != HALF; i++, index += 2)
-    out[i] = (table[this->buffer_[index]] << 4) | table[this->buffer_[index + 1]];
+void HOT CrowPanel579::plane_half_(size_t y, size_t offset, const uint8_t *bits, uint8_t *out) {
+  // Plane byte offset + i holds the 8 pixels of buffer bytes 4 (offset + i) to the third after.
+  const uint8_t *in = &this->buffer_[y * this->row_width_ + 4 * offset];
+  for (size_t i = 0; i != HALF; i++, in += 4)
+    out[i] = bits[in[0]] << 6 | bits[in[1]] << 4 | bits[in[2]] << 2 | bits[in[3]];
 }
 
-// Sends passes pass_ to 3, a 10 ms slice at a time: 0x26 then 0x24, each for the left half
-// then the right. 0x26 always gets each pixel's high bit, its black or white reading; 0x24 gets
-// the same, or each pixel's low bit when low_new is set. Returns true once the last pass is out.
-bool HOT CrowPanel579::send_planes_(bool low_new) {
+// Sends planes plane_ to 3, a 10 ms slice at a time: 0x26 then 0x24, each for the left half then
+// the right, through old_bits and new_bits. Returns true once the last is out.
+bool HOT CrowPanel579::send_planes_(const uint8_t *old_bits, const uint8_t *new_bits) {
   const uint32_t start = millis();
   uint8_t row[HALF];
-  while (this->pass_ != 4) {
-    const bool left = (this->pass_ & 1) == 0;
-    const bool new_plane = this->pass_ >= 2;
+  while (this->plane_ != 4) {
+    const bool left = (this->plane_ & 1) == 0;
+    const bool new_plane = this->plane_ >= 2;
     if (this->current_data_index_ == 0) {
       this->set_ram_area_(left);
       this->command((new_plane ? 0x24 : 0x26) | (left ? LEFT : 0));
@@ -280,7 +343,7 @@ bool HOT CrowPanel579::send_planes_(bool low_new) {
     const size_t offset = left ? 0 : RIGHT_OFFSET;
     this->start_data_();
     while (this->current_data_index_ != HEIGHT) {
-      this->plane_half_(this->current_data_index_, offset, !(new_plane && low_new), row);
+      this->plane_half_(this->current_data_index_, offset, new_plane ? new_bits : old_bits, row);
       this->write_array(row, HALF);
       ++this->current_data_index_;
       if (this->current_data_index_ != HEIGHT && millis() - start > epaper_spi::MAX_TRANSFER_TIME) {
@@ -290,66 +353,101 @@ bool HOT CrowPanel579::send_planes_(bool low_new) {
     }
     this->disable();
     this->current_data_index_ = 0;
-    this->pass_++;
+    this->plane_++;
   }
-  this->pass_ = 0;
+  this->plane_ = 0;
   return true;
 }
 
-// A full refresh sends all four passes, so 0x26 holds the frame's black and white reading once
-// it has run. A partial refresh sends only 0x24, the new frame: 0x26 already holds what is on
-// the glass.
+// The first call of an update decides what kind it is. A partial refresh sends only 0x24, the new
+// frame: 0x26 already holds what is on the glass. Every other refresh sends both planes.
 bool CrowPanel579::transfer_data() {
-  const bool partial = this->update_count_ != 0;
-  if (this->pass_ == 0 && this->current_data_index_ == 0) {
-    this->partial_sent_ = partial;
-    if (partial)
-      this->pass_ = 2;
+  if (this->plane_ == 0 && this->current_data_index_ == 0 && this->grey_pass_ == 0) {
+    if (this->update_count_ != 0) {
+      this->kind_ = Kind::PARTIAL;
+      this->plane_ = 2;
+    } else {
+      this->kind_ = !this->grey_ ? Kind::BLACK_WHITE : this->seven_ ? Kind::SEVEN_GREYS : Kind::GREY;
+    }
   }
-  return this->send_planes_(!partial && this->grey_);
-}
-
-// Runs once the refresh has finished. After a partial one, 0x26 still holds the frame before it,
-// so the new frame goes to both planes for the next partial to compare with. The base moves
-// straight on to sleeping the controllers, so loop() sends them first, in slices. Both planes,
-// as GxEPD2's writeImageAgain does: on this panel a partial refresh swaps the banks 0x24 and 0x26
-// address until the next reset, which is what RAM ping-pong (0x37) does, so here 0x24 alone would
-// do and 0x26 alone does not. Both work whichever way a panel's OTP sets it.
-void CrowPanel579::power_off() {
-  if (!this->partial_sent_)
-    return;
-  this->partial_sent_ = false;
-  this->copying_ = true;
-}
-
-void CrowPanel579::loop() {
-  if (this->copying_) {
-    if (!this->send_planes_(false))
-      return;
-    this->copying_ = false;
+  switch (this->kind_) {
+    case Kind::PARTIAL:
+    case Kind::BLACK_WHITE:
+      return this->send_planes_(WHITE_BITS.table, WHITE_BITS.table);
+    case Kind::GREY:
+      return this->send_planes_(WHITE_BITS.table, GREY_LOW_BITS.table);
+    case Kind::SEVEN_GREYS:
+      if (this->grey_pass_ == 1)
+        return this->send_planes_(WHITE_BITS.table, GREY_LOW_BITS.table);
+      return this->send_planes_(HALF_HIGH_BITS.table, HALF_LOW_BITS.table);
   }
-  EPaperBase::loop();
+  return true;
 }
 
 // The loaded waveforms need 0x21's second byte at 0x10, which GxEPD2 calls the cascade bit;
 // without it, changed pixels stop half way, at grey.
 void CrowPanel579::refresh_screen(bool partial) {
-  if (partial) {
-    ESP_LOGV(TAG, "Partial refresh");
-    this->cmd_data(0x3C, {BORDER_PARTIAL});
-    this->cmd_data(0x21, {0x00, 0x10});
-    this->load_waveform_(PARTIAL.bytes);
-  } else if (this->grey_) {
-    ESP_LOGV(TAG, "Grey refresh");
-    this->cmd_data(0x3C, {BORDER_GREY});
-    this->cmd_data(0x21, {0x00, 0x10});
-    this->load_waveform_(GREY_LUT);
-  } else {
-    ESP_LOGV(TAG, "Full refresh");
-    this->cmd_data(0x3C, {BORDER_FULL});
-    this->cmd_data(0x22, {UPDATE_FULL});
+  switch (this->kind_) {
+    case Kind::PARTIAL:
+      ESP_LOGV(TAG, "Partial refresh");
+      this->cmd_data(0x3C, {BORDER_PARTIAL});
+      this->cmd_data(0x21, {0x00, 0x10});
+      this->load_waveform_(PARTIAL.bytes);
+      break;
+    case Kind::GREY:
+      ESP_LOGV(TAG, "Grey refresh");
+      this->cmd_data(0x3C, {BORDER_GREY});
+      this->cmd_data(0x21, {0x00, 0x10});
+      this->load_waveform_(GREY_LUT);
+      break;
+    case Kind::SEVEN_GREYS:
+      ESP_LOGV(TAG, "Seven-grey refresh, pass %u", (unsigned) this->grey_pass_ + 1);
+      this->cmd_data(0x3C, {this->grey_pass_ == 1 ? BORDER_GREY : BORDER_PARTIAL});
+      this->cmd_data(0x21, {0x00, 0x10});
+      this->load_waveform_(this->grey_pass_ == 0   ? HALF_TO_BLACK.bytes
+                           : this->grey_pass_ == 1 ? EVEN_GREY.bytes
+                                                   : HALF_TO_WHITE.bytes);
+      break;
+    case Kind::BLACK_WHITE:
+      ESP_LOGV(TAG, "Full refresh");
+      this->cmd_data(0x3C, {BORDER_FULL});
+      this->cmd_data(0x22, {UPDATE_FULL});
+      break;
   }
   this->command(0x20);
+}
+
+// Runs once a refresh has finished. A seven-grey refresh has passes left: loop() starts the next.
+// After its last pass, or after a partial refresh, 0x26 does not hold the frame on the glass, so
+// its black and white reading goes to both planes for the next partial to compare with. The base
+// moves straight on to sleeping the controllers, so loop() writes them first, in slices. Both
+// planes, as GxEPD2's writeImageAgain does: on this panel a refresh swaps the banks 0x24 and 0x26
+// address until the next reset, which is what RAM ping-pong (0x37) does, so after a partial 0x24
+// alone would do and 0x26 alone does not. Both work whichever way a panel's OTP sets it.
+void CrowPanel579::power_off() {
+  if (this->kind_ == Kind::SEVEN_GREYS && this->grey_pass_ < 2) {
+    this->grey_pass_++;
+    this->next_pass_ = true;
+    return;
+  }
+  this->grey_pass_ = 0;
+  this->copying_ = this->kind_ == Kind::PARTIAL || this->kind_ == Kind::SEVEN_GREYS;
+}
+
+void CrowPanel579::loop() {
+  if (this->copying_) {
+    if (!this->send_planes_(WHITE_BITS.table, WHITE_BITS.table))
+      return;
+    this->copying_ = false;
+  }
+  // Each pass of a seven-grey refresh is a full update to the base, reset to refresh, and the
+  // count goes back so the three count as one.
+  if (this->next_pass_ && this->state_ == epaper_spi::EPaperState::DEEP_SLEEP) {
+    this->next_pass_ = false;
+    this->update_count_ = 0;
+    this->set_state_(epaper_spi::EPaperState::RESET);
+  }
+  EPaperBase::loop();
 }
 
 // Loads a waveform and runs it: 0x22 0xCF skips the OTP's temperature lookup and waveform.

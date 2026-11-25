@@ -33,10 +33,18 @@ AUTO_LOAD = ["epaper_spi", "split_buffer"]
 DEPENDENCIES = ["spi"]
 
 CONF_GREY = "grey"
+CONF_GREY_LEVELS = "grey_levels"
 CONF_POWER_PIN = "power_pin"
 
 crowpanel_579_ns = cg.esphome_ns.namespace("crowpanel_579")
 CrowPanel579 = crowpanel_579_ns.class_("CrowPanel579", EPaperBase)
+
+
+def _seven_needs_grey(config):
+    if config[CONF_GREY_LEVELS] == 7 and not config[CONF_GREY]:
+        raise cv.Invalid("grey_levels: 7 needs grey: true")
+    return config
+
 
 CONFIG_SCHEMA = cv.All(
     display.FULL_DISPLAY_SCHEMA.extend(
@@ -57,11 +65,15 @@ CONFIG_SCHEMA = cv.All(
             # Full refreshes in four greys (about 4.1 s) instead of the panel's own
             # black and white (about 3.7 s). Partial refreshes stay black and white.
             cv.Optional(CONF_GREY, default=False): cv.boolean,
+            # 7 runs each grey refresh in three passes, with a half step between each of the
+            # four greys (about 5 s). Needs grey.
+            cv.Optional(CONF_GREY_LEVELS, default=4): cv.one_of(4, 7, int=True),
             # Something else decides when to draw (an interval, HA, the dial).
             cv.Optional(CONF_UPDATE_INTERVAL, default="never"): cv.update_interval,
         }
     ),
     cv.has_at_most_one_key(CONF_PAGES, CONF_LAMBDA),
+    _seven_needs_grey,
 )
 
 FINAL_VALIDATE_SCHEMA = spi.final_validate_device_schema(
@@ -84,6 +96,7 @@ async def to_code(config):
     cg.add(var.set_power_pin(power))
     cg.add(var.set_full_update_every(config[CONF_FULL_UPDATE_EVERY]))
     cg.add(var.set_grey(config[CONF_GREY]))
+    cg.add(var.set_grey_levels(config[CONF_GREY_LEVELS]))
 
     if lambda_config := config.get(CONF_LAMBDA):
         lambda_ = await cg.process_lambda(
