@@ -18,11 +18,9 @@ static constexpr uint8_t LAST_X = 0x31;  // the 50th byte of a controller's RAM 
 static constexpr uint8_t LAST_Y_LOW = (CrowPanel579::HEIGHT - 1) & 0xFF;
 static constexpr uint8_t LAST_Y_HIGH = (CrowPanel579::HEIGHT - 1) >> 8;
 
-// Display update control (0x22) sequences. The full and partial ones read the panel's
-// temperature sensor and load the matching OTP waveform first; the grey one runs the waveform
-// loaded with 0x32.
+// Display update control (0x22) sequences. The full one reads the panel's temperature sensor and
+// loads the matching OTP waveform first; the partial and grey ones run a waveform loaded with 0x32.
 static constexpr uint8_t UPDATE_FULL = 0xF7;
-static constexpr uint8_t UPDATE_PARTIAL = 0xFF;
 static constexpr uint8_t UPDATE_LOADED = 0xCF;
 // Border waveform (0x3C): white on a full refresh, left alone on a partial one, and the
 // loaded waveform's on a grey one.
@@ -30,11 +28,19 @@ static constexpr uint8_t BORDER_FULL = 0x01;
 static constexpr uint8_t BORDER_PARTIAL = 0x80;
 static constexpr uint8_t BORDER_GREY = 0x03;
 
+// Loaded waveforms use the SSD1683's black and white mode: 227 bytes for 0x32, then 0x3F (end
+// option), 0x03 (VGH), 0x04 (VSH1, VSH2, VSL) and 0x2C (VCOM). 0x32 takes five tables of 42
+// bytes, VCOM's and then one for each pixel state, named by the pixel's 0x24 bit then its 0x26
+// bit, 1 white: WW, BW, WB, BB. A table is six groups of seven bytes: a repeat count, four phases
+// (the level in the top two bits, frames in the rest) and two state repeats. VSH1 (+15 V) drives
+// a pixel black and VSL (-15 V) white. Every table below spends as long at one as at the other,
+// so no refresh leaves a net drive on any pixel.
+
 // Waveshare's four-grey waveform for their 4.2in V2 panel, also an SSD1683, from their
-// epd4in2_V2.py: 227 bytes for 0x32, then 0x3F, 0x03 (VGH), 0x04 (VSH1, VSH2, VSL) and 0x2C
-// (VCOM). One change: group 1, which only shakes the particles (the same balanced drive in every
-// block), runs once rather than five times. That takes the refresh from 5.5 s to 3.7 s; on this
-// panel the four greys measure the same, and a run of partials before it clears as well.
+// epd4in2_V2.py, with two changes. Group 1, which only shakes the particles (the same balanced
+// drive in every table), runs once rather than five times: the refresh takes 3.7 s rather than
+// 5.5 s, and the four greys measure the same. And the end option is 0x22, as the datasheet asks,
+// which discharges the pixels after the last phase; Waveshare's 0x07 leaves them charged to it.
 static constexpr uint8_t GREY_LUT[233] = {
   // VCOM, then a LUT per pixel state; 6 groups each of RP, phases A to D, SR_AB, SR_CD
   0x01, 0x0A, 0x1B, 0x0F, 0x03, 0x01, 0x01,  // VCOM group 0
@@ -70,8 +76,62 @@ static constexpr uint8_t GREY_LUT[233] = {
   // 210..223 reserved, 224 FR, 225..226 XON
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
   // tail: 0x3F, 0x03, 0x04 x3, 0x2C
-  0x07, 0x17, 0x41, 0xA8, 0x32, 0x30
+  0x22, 0x17, 0x41, 0xA8, 0x32, 0x30
 };
+
+// The partial refresh's waveform, balanced on every change rather than only over time: a pixel
+// turning black is pushed towards white for 15 frames, then towards black for 15, and one turning
+// white the other way round. The first push only deepens the colour the pixel already shows, so
+// nothing flashes. Pixels that keep their colour get no drive at all, so greys survive any number
+// of partial refreshes, where the panel's own partial waveform fades them. Busy for 0.85 s.
+struct PartialWaveform {
+  uint8_t bytes[233];
+  constexpr PartialWaveform() : bytes() {
+    constexpr uint8_t FRAMES = 15, NONE = FRAMES, BLACK = 0x40 | FRAMES, WHITE = 0x80 | FRAMES;
+    // Group 0's phases A and B for VCOM, WW, BW, WB and BB. The other groups repeat 0 times.
+    constexpr uint8_t phases[5][2] = {{NONE, NONE}, {NONE, NONE}, {WHITE, BLACK}, {BLACK, WHITE}, {NONE, NONE}};
+    for (int t = 0; t < 5; t++) {
+      bytes[t * 42] = 1;
+      bytes[t * 42 + 1] = phases[t][0];
+      bytes[t * 42 + 2] = phases[t][1];
+      bytes[t * 42 + 5] = 1;
+      bytes[t * 42 + 6] = 1;
+    }
+    bytes[224] = GREY_LUT[224];  // the frame rate
+    for (int i = 227; i < 233; i++)
+      bytes[i] = GREY_LUT[i];  // the end option and the voltages
+  }
+};
+static constexpr PartialWaveform PARTIAL{};
+
+// Whether a loaded waveform leaves no net drive on any pixel: VCOM stays at its DC level, VSH1 and
+// VSL are +15 V and -15 V, and every pixel table spends as many frames at one as at the other,
+// counting the group and state repeats. VSH2 counts as unbalanced, since nothing here uses it.
+static constexpr bool balanced(const uint8_t *waveform) {
+  if (waveform[229] != 0x41 || waveform[231] != 0x32)
+    return false;
+  for (int t = 0; t < 5; t++) {
+    int net = 0;
+    for (int g = 0; g < 6; g++) {
+      const uint8_t *group = waveform + t * 42 + g * 7;
+      for (int pair = 0; pair < 2; pair++) {
+        int frames = 0;
+        for (int i = 0; i < 2; i++) {
+          const int level = group[1 + 2 * pair + i] >> 6, length = group[1 + 2 * pair + i] & 0x3F;
+          if (level == 3 || (t == 0 && level != 0))
+            return false;
+          frames += level == 1 ? length : level == 2 ? -length : 0;
+        }
+        net += frames * group[5 + pair] * group[0];
+      }
+    }
+    if (net != 0)
+      return false;
+  }
+  return true;
+}
+static_assert(balanced(GREY_LUT), "the grey waveform must leave no net drive on a pixel");
+static_assert(balanced(PARTIAL.bytes), "the partial waveform must leave no net drive on a pixel");
 
 // A grey level from 0 (black) to 3 (white), in even steps of luma so anti-aliased text, which
 // blends at 0, 85, 170 and 255, keeps all four.
@@ -249,11 +309,12 @@ bool CrowPanel579::transfer_data() {
   return this->send_planes_(!partial && this->grey_);
 }
 
-// Runs once the refresh has finished. After a partial one, 0x26 still holds the frame before
-// it, so both planes get the frame now on the glass, for the next partial to compare with. The
-// base moves straight on to sleeping the controllers, so loop() sends them first, in slices.
-// Both planes, as GxEPD2's writeImageAgain does: on this panel, writing 0x26 alone leaves the
-// next partial in the same wake comparing against the wrong frame.
+// Runs once the refresh has finished. After a partial one, 0x26 still holds the frame before it,
+// so the new frame goes to both planes for the next partial to compare with. The base moves
+// straight on to sleeping the controllers, so loop() sends them first, in slices. Both planes,
+// as GxEPD2's writeImageAgain does: on this panel a partial refresh swaps the banks 0x24 and 0x26
+// address until the next reset, which is what RAM ping-pong (0x37) does, so here 0x24 alone would
+// do and 0x26 alone does not. Both work whichever way a panel's OTP sets it.
 void CrowPanel579::power_off() {
   if (!this->partial_sent_)
     return;
@@ -270,31 +331,36 @@ void CrowPanel579::loop() {
   EPaperBase::loop();
 }
 
+// The loaded waveforms need 0x21's second byte at 0x10, which GxEPD2 calls the cascade bit;
+// without it, changed pixels stop half way, at grey.
 void CrowPanel579::refresh_screen(bool partial) {
   if (partial) {
     ESP_LOGV(TAG, "Partial refresh");
     this->cmd_data(0x3C, {BORDER_PARTIAL});
-    // Changed pixels are only driven all the way when 0x21's second byte has 0x10 set
-    // (GxEPD2 calls it the cascade bit); without it they stop half way, at grey.
     this->cmd_data(0x21, {0x00, 0x10});
-    this->cmd_data(0x22, {UPDATE_PARTIAL});
+    this->load_waveform_(PARTIAL.bytes);
   } else if (this->grey_) {
     ESP_LOGV(TAG, "Grey refresh");
     this->cmd_data(0x3C, {BORDER_GREY});
     this->cmd_data(0x21, {0x00, 0x10});
-    this->cmd_data(0x0C, {0x8B, 0x9C, 0xA4, 0x0F});  // booster soft start, as Waveshare sets it
-    this->cmd_data(0x32, GREY_LUT, 227);
-    this->cmd_data(0x3F, {GREY_LUT[227]});
-    this->cmd_data(0x03, {GREY_LUT[228]});
-    this->cmd_data(0x04, {GREY_LUT[229], GREY_LUT[230], GREY_LUT[231]});
-    this->cmd_data(0x2C, {GREY_LUT[232]});
-    this->cmd_data(0x22, {UPDATE_LOADED});
+    this->load_waveform_(GREY_LUT);
   } else {
     ESP_LOGV(TAG, "Full refresh");
     this->cmd_data(0x3C, {BORDER_FULL});
     this->cmd_data(0x22, {UPDATE_FULL});
   }
   this->command(0x20);
+}
+
+// Loads a waveform and runs it: 0x22 0xCF skips the OTP's temperature lookup and waveform.
+void CrowPanel579::load_waveform_(const uint8_t *waveform) {
+  this->cmd_data(0x0C, {0x8B, 0x9C, 0xA4, 0x0F});  // booster soft start, as Waveshare sets it
+  this->cmd_data(0x32, waveform, 227);
+  this->cmd_data(0x3F, {waveform[227]});
+  this->cmd_data(0x03, {waveform[228]});
+  this->cmd_data(0x04, {waveform[229], waveform[230], waveform[231]});
+  this->cmd_data(0x2C, {waveform[232]});
+  this->cmd_data(0x22, {UPDATE_LOADED});
 }
 
 // Deep sleep mode 1 keeps RAM. The next update wakes the controllers with a hardware reset.

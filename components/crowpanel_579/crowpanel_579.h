@@ -19,15 +19,16 @@ namespace esphome::crowpanel_579 {
  *
  * The buffer holds 2 bits a pixel, 0 black to 3 white. A partial refresh is black and white:
  * it compares RAM 0x26 (what the panel shows) with 0x24 (the new frame), each pixel light or
- * dark. A full refresh is either the panel's own black and white one or, with grey enabled, a
- * four-grey one from a loaded waveform, where 0x26 holds each pixel's high bit and 0x24 its low
- * bit. Greys a partial refresh does not change stay grey. Colours follow epaper_spi:
- * Color::BLACK is ink, Color::WHITE is paper.
+ * dark, and runs a loaded waveform that drives only the pixels that change. A full refresh is
+ * either the panel's own black and white one or, with grey enabled, a four-grey one from a
+ * loaded waveform, where 0x26 holds each pixel's high bit and 0x24 its low bit. Greys a partial
+ * refresh does not change stay as they are. Colours follow epaper_spi: Color::BLACK is ink,
+ * Color::WHITE is paper.
  *
  * After every refresh, 0x26 holds what is on the glass, light or dark: a full refresh leaves it
- * so, and after a partial one the driver sends its new frame to both planes. A partial refresh therefore
- * sends only the new frame, and the panel's RAM is the only copy of what it shows, which is
- * what lets the ESP sleep. Through deep sleep the driver holds the panel's power and reset pins
+ * so, and after a partial one the driver sends its new frame to both planes. A partial refresh
+ * therefore sends only the new frame, and the panel's RAM is the only copy of what it shows,
+ * which is what lets the ESP sleep. Through deep sleep the driver holds the panel's power and reset pins
  * high, so the panel keeps its picture and its RAM; after a wake the full_update_every count
  * carries on, and the first update can be partial.
  */
@@ -71,6 +72,8 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   // One controller's half of a plane row: each pixel's high bit (also its black or white
   // reading) or its low bit.
   void plane_half_(size_t y, size_t offset, bool high, uint8_t *out);
+  // Load a 233-byte waveform (0x32 and its tail) and select it for the refresh.
+  void load_waveform_(const uint8_t *waveform);
   // Send the RAM plane passes from pass_ on, in slices; true once all four are out.
   bool send_planes_(bool low_new);
 

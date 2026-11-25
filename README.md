@@ -1,13 +1,18 @@
-# crowpanel-579
+# crowpanel-epaper
 
-An ESPHome display component for the ELECROW CrowPanel ESP32-S3 5.79" e-paper
-HMI. The panel is 792x272, driven by two SSD1683 controllers in cascade.
+ESPHome display components for ELECROW's CrowPanel ESP32-S3 e-paper HMI
+boards. `crowpanel_579` drives the 5.79", a 792x272 panel run by two SSD1683
+controllers in cascade. The 4.2" comes next.
 
-- Full and partial refreshes. A partial update takes about 0.9 s, reset
-  included.
-- Four greys in about 4.1 s. That is Waveshare's grey waveform with the
-  particle shaking cut from five rounds to one, which saves 1.8 s and leaves
-  the greys measuring the same.
+- Partial refreshes in about 1.2 s that drive only the pixels that change, so
+  greys elsewhere on the screen survive any number of them.
+- Four greys in about 4.1 s: Waveshare's grey waveform with the particle
+  shaking cut from five rounds to one, which saves 1.8 s and leaves the greys
+  measuring the same.
+- Every waveform the driver loads is balanced: each pixel spends as long
+  driven one way as the other on every refresh, so nothing builds up in the
+  panel however long it runs. The build checks this, so a change that breaks
+  it does not compile.
 - Deep sleep keeps the picture. The panel holds its frame and its RAM while
   the ESP32 sleeps, so the first update after a wake is partial, with no
   flash, and `full_update_every` keeps counting across wakes.
@@ -23,7 +28,7 @@ releases, so older versions may not build it.
 
 ```yaml
 external_components:
-  - source: github://tommyothen/crowpanel-579@main
+  - source: github://tommyothen/crowpanel-epaper@main
     components: [crowpanel_579]
 
 esp32:
@@ -77,11 +82,28 @@ Draw with `Color::BLACK` on the white paper. Colours map to four levels by
 luma: below 64 is black, below 128 dark grey, below 192 light grey, the rest
 white. Fonts with `bpp: 2` give anti-aliased text on a grey refresh.
 
-Partial refreshes are black and white. A pixel that changes shows as black or
-white until the next full refresh, and greys that a run of partials leaves
-alone drift: dark grey towards black, light grey towards white. A large black
-area that partials clear fades only to grey. Keep big black shapes still
-between full refreshes, or ask for a full one when they move.
+Partial refreshes are black and white and drive only the pixels whose black
+or white reading changes. Greys elsewhere stay exactly as the last grey
+refresh left them; a pixel that changes shows as black or white until the
+next full refresh. A large black area that a full refresh drew fades only to
+grey when a partial clears it, while black that a partial drew clears
+cleanly. Keep big black shapes still between full refreshes, or ask for a full
+one when they move.
+
+## Looking after the panel
+
+- Both loaded waveforms, the partial and the grey one, give every pixel as
+  many frames at +15 V as at -15 V on every refresh, with VCOM held at its DC
+  level. A `static_assert` checks both tables when the component compiles.
+- After each refresh the controllers discharge the pixels (end option 0x22)
+  and go into deep sleep, so nothing stays driven between updates.
+- The panel's own full refresh, used when `grey` is off, is its OTP waveform:
+  temperature compensated, and the panel maker's to balance.
+- The loaded waveforms are fixed rather than temperature compensated. They
+  were tuned indoors; in the cold, expect slower, paler changes.
+- A full refresh now and then still helps: it resets the deep blacks and
+  clears what partials leave behind. `full_update_every` caps a run of
+  partials, across deep sleep too.
 
 ## Deep sleep
 
@@ -141,20 +163,39 @@ community drivers listed below, and testing on the board.
   (0x18 0x80).
 - **Full refresh** is 0x22 0xF7, with the OTP waveform for the temperature.
   About 3.7 s.
-- **Partial refresh** is 0x21 0x00 0x10, then 0x22 0xFF. GxEPD2 calls 0x21's
-  0x10 the cascade bit. Without it, every changed pixel stops half way, at
-  grey, whatever the waveform, so the advice in crowtides never to send 0x21
-  does not hold on this board.
+- **The cascade bit.** Partial and grey refreshes need 0x21 0x00 0x10; GxEPD2
+  calls the 0x10 the cascade bit. Without it, every changed pixel stops half
+  way, at grey, whatever the waveform, so the advice in crowtides never to
+  send 0x21 does not hold on this board.
+- **Loaded waveforms.** 0x32 takes 227 bytes in the black and white mode's
+  format: five tables of six groups, VCOM's and then WW, BW, WB and BB, named
+  by the pixel's 0x24 bit then its 0x26 bit. 0x3F, 0x03, 0x04 and 0x2C take
+  the end option and the voltages, then 0x22 0xCF runs it without the OTP.
+  On this panel VSH1 (+15 V) drives a pixel black and VSL (-15 V) white.
+- **The OTP partial waveform** (0x22 0xFF) runs about ten frames and also
+  drives pixels that do not change: two of them took a light grey from 52 to
+  65 on the camera, and eleven took it nearly to white. The driver loads its
+  own instead: a pixel turning black is pushed towards white for 15 frames
+  and then towards black for 15, one turning white the other way round, and
+  the rest get nothing. It clears a moved box a little better than the OTP's
+  and leaves greys untouched. Pushing one way only, for 20 frames, clears a
+  little better still but balances only over many changes.
 - **What a partial compares.** RAM 0x26 should hold what is on the glass and
-  0x24 the new frame. A full refresh leaves 0x26 right. After a partial one
-  the driver writes the new frame to both planes, as GxEPD2's
-  `writeImageAgain` does: writing 0x26 alone leaves the next partial in the
-  same wake comparing against the wrong frame. Why is not clear yet.
+  0x24 the new frame. A full refresh leaves 0x26 right. A partial refresh
+  swaps the banks 0x24 and 0x26 address until the next reset, which is what
+  RAM ping-pong (0x37, set from the OTP) does: afterwards, writing the new
+  frame to 0x24 alone makes the next partial right and 0x26 alone does not.
+  The driver writes both, as GxEPD2's `writeImageAgain` does, which works
+  either way.
 - **Grey.** The OTP has no grey waveform; claiming 80 to 127 °C with 0x1A in
   display mode 1 gives only black and white. Waveshare's four-grey waveform
-  for their 4.2" V2, another SSD1683, works: 0x32 takes 227 bytes, then 0x3F,
-  0x03, 0x04 and 0x2C, then 0x22 0xCF, with 0x21's cascade bit. Each pixel's
-  high bit goes to 0x26 and its low bit to 0x24, 11 white and 00 black.
+  for their 4.2" V2, another SSD1683, works. Each pixel's high bit goes to
+  0x26 and its low bit to 0x24, 11 white and 00 black. Its end option is 0x07,
+  which leaves the pixels charged to the last phase (+15 V on black); the
+  datasheet asks for 0x22, which discharges them, and the greys look the same.
+- **Read back.** The controllers can report their temperature, RAM and display
+  options, but only over the data line, which the board wires to one GPIO as
+  an output. Reading would mean bit-banging it.
 - **Deep sleep.** 0x10 0x01 keeps RAM. With GPIO7 and reset held high through
   an ESP32 deep sleep, the panel keeps its picture and both planes, and they
   survive the hardware reset and 0x12 that start the next update.
@@ -183,7 +224,8 @@ Each frame is about 20 ms. None of them left a ghost of the frame before.
 
 ### Still open
 
-- Why a partial needs both planes rewritten after it.
+- More greys: a second, short balanced pass after the grey refresh could
+  split each level in four.
 - A faster grey: shortening group 2 and nudging its phases to win the greys
   back.
 
@@ -195,6 +237,8 @@ Each frame is about 20 ms. None of them left a ghost of the frame before.
 - samperk1: <https://github.com/samperk1/esphome-crowpanel-579>
 - crowtides, the best notes on the quirks: <https://github.com/rowanseymour/crowtides>
 - Waveshare's 4.2" V2, the grey waveform: <https://github.com/waveshareteam/e-Paper>
+- Solomon Systech's SSD1683 datasheet, in Elecrow's repo above: the waveform format and the
+  voltage tables
 
 ## Licence
 
