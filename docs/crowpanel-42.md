@@ -64,18 +64,18 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
 
 ## Measured
 
-At 11 °C (the panel's sensor and the flat's own agreed), 50 Hz, against flat white and black
+Times are whole updates, drawing included, with logging at DEBUG: VERBOSE logging over the
+115200 baud UART adds about 0.15 s to each. At 11 °C (the panel's sensor and the flat's own agreed), 50 Hz, against flat white and black
 frames, each bar the panel's full height: where a bar sits moves its reading by up to 0.05,
 since the camera's response is not linear and the lamp lights the panel unevenly.
 
 | Refresh | Time | Result |
 |---|---|---|
-| Black and white (Elecrow's 20, 10, 20 frames) | 1.3 to 1.4 s | Clean black and white |
-| Four greys (the 5.79" driver's waveform) | 3.8 s | 0.00, 0.26, 0.75, 0.95 |
-| Seven greys, retuned for this panel | 4.7 s | 0.00, 0.17, 0.31, 0.50, 0.67, 0.80, 0.96 |
-| Fast partial, 15 frames one way | 0.62 s | Solid black and white; greys elsewhere stay |
+| Black and white (Elecrow's 20, 10, 20 frames) | 1.1 to 1.2 s | Clean black and white |
+| Four greys (the 5.79" driver's waveform) | 3.6 s | 0.00, 0.26, 0.75, 0.95 |
+| Seven greys, retuned for this panel | 4.2 s | 0.00, 0.17, 0.31, 0.50, 0.67, 0.80, 0.96 |
+| Fast partial, 12 frames one way | 0.40 s | 0.00 black, 0.96 white; greys elsewhere stay |
 
 ## Still open
 
 - Check the temperature bands in a warm room: they borrow the 5.79" panel's maker's curve.
-- Measure what the fast partial's 0.62 s is made of; the 5.79" manages 0.4 to 0.5 s.

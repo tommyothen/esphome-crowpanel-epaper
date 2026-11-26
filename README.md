@@ -43,10 +43,10 @@ needs no `temperature_sensor`; `id(epd).panel_temperature()` returns it in °C. 
 
 | Mode | Time (50 Hz) | Behaviour |
 |---|---|---|
-| Full black and white | 1.3 to 1.4 s | Balanced, Elecrow's waveform |
-| Full four greys | about 3.8 s | Measured 0.00, 0.26, 0.75 and 0.95 |
-| Full seven greys | about 4.7 s | Measured 0.00, 0.17, 0.31, 0.50, 0.67, 0.80 and 0.96 |
-| Partial, subsequent | about 0.6 s | One-way push with per-pixel balance tracking |
+| Full black and white | 1.1 to 1.2 s | Balanced, Elecrow's waveform |
+| Full four greys | about 3.6 s | Measured 0.00, 0.26, 0.75 and 0.95 |
+| Full seven greys | about 4.2 s | Measured 0.00, 0.17, 0.31, 0.50, 0.67, 0.80 and 0.96 |
+| Partial, subsequent | about 0.4 s | One-way push with per-pixel balance tracking |
 
 ```yaml
 display:

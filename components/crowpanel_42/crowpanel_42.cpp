@@ -173,10 +173,11 @@ struct SimpleWaveform {
 // The full black and white refresh, Elecrow's: every pixel pushed the far way for 20 frames, rested
 // for 10, then pushed to its colour for 20. About 1 s at 50 Hz.
 static constexpr SimpleWaveform BLACK_WHITE{{20, 10, 20}, {{0, 0, 0}, {1, 0, 2}, {2, 0, 1}, {1, 0, 2}, {2, 0, 1}}};
-static constexpr uint8_t FAST_FRAMES = 15;
-// A fast partial pushes a changing pixel one way only: 15 frames towards its new colour, against
-// the balanced partial's 50. Each one leaves its pixel a push out of balance, which the driver
-// records and later cancels.
+static constexpr uint8_t FAST_FRAMES = 12;
+// A fast partial pushes a changing pixel one way only: 12 frames towards its new colour, against
+// the balanced partial's 50. At 11 °C, 6, 9, 12 and 15 frames take white to 0.09, 0.02, 0.00 and
+// -0.02 on the camera, and black to 0.86, 0.93, 0.96 and 0.98. Each push leaves its pixel out of
+// balance, which the driver records and later cancels.
 static constexpr SimpleWaveform ONE_WAY{{FAST_FRAMES, 0, 0}, {{0}, {0}, {1}, {2}, {0}}};
 // Cancelling, with OLD saying which pixels are out of balance and NEW what the glass shows: a push
 // back the other way. It runs just before a full refresh, whose flash hides it.
