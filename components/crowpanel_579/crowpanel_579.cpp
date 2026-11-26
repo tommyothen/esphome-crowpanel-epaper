@@ -232,22 +232,30 @@ static SimpleWaveform scan_waveform(uint8_t frames) {
   return SimpleWaveform{{a, b, 0}, {{0}, {0}, {1, 1}, {2, 2}, {0}}};
 }
 
-// Glides and ticks, at 195 Hz. Not yet measured on this panel: the 4.2"'s, with a quarter more
-// frames, as this panel's fast partial needs 15 frames at 50 Hz where the 4.2"'s needs 12.
+// Glides and ticks, at 195 Hz, measured on this panel at about 20 °C, whose ink moves at roughly
+// two thirds the 4.2"'s pace. From a settled white (the panel's own full refresh), 6, 12, 18, 24,
+// 30, 36, 48, 60 and 72 frames of black given as binary digits left 0.89, 0.67, 0.53, 0.37, 0.30,
+// 0.24, 0.12, 0.08 and 0.05; from a settled black, as much white 0.08, 0.23, 0.39, 0.57, 0.72,
+// 0.76, 0.84, 0.89 and 0.92. The glide table reads those backwards, black 66 frames and white 90.
+// Ticks are 8 frames, not the 4.2"'s 4: this panel's ticks wait on drawing and planning, not on
+// the refresh, so 8 frames cost nothing more and push twice as far. Streams of them left 0.67,
+// 0.42, 0.26, 0.19, 0.13, 0.10, 0.05 and 0.02 after 8, 16, 24, 32, 40, 48, 64 and 72 frames, and
+// 0.12, 0.37, 0.61, 0.76, 0.84, 0.88, 0.96 and 1.00 the other way.
 static constexpr CrowPanel579::GlideTuning GLIDES{
     {
-        {0, -6, -14, -21, -25, -31, -60},
-        {29, 0, -4, -8, -13, -21, -50},
-        {41, 16, 0, -3, -6, -15, -45},
-        {46, 21, 10, 0, -4, -11, -40},
-        {50, 26, 16, 9, 0, -6, -35},
-        {54, 29, 19, 13, 6, 0, -28},
-        {60, 30, 20, 15, 10, 6, 0},
+        {0, -5, -11, -19, -26, -40, -90},
+        {23, 0, -4, -7, -14, -25, -80},
+        {39, 10, 0, -3, -7, -19, -74},
+        {47, 18, 9, 0, -3, -13, -68},
+        {54, 22, 16, 7, 0, -7, -62},
+        {58, 22, 14, 11, 7, 0, -43},
+        {66, 38, 23, 16, 11, 7, 0},
     },
-    {{0, .99f}, {5, .89f}, {10, .70f}, {15, .52f}, {20, .40f}, {25, .31f}, {30, .25f}, {40, .18f}, {50, .14f},
-     {60, .11f}, {80, .08f}},
-    {{0, .03f}, {5, .11f}, {10, .26f}, {15, .46f}, {20, .64f}, {25, .75f}, {30, .82f}, {40, .90f}, {50, .93f},
-     {60, .96f}, {80, .98f}},
+    8,
+    {{0, .99f}, {8, .67f}, {16, .42f}, {24, .26f}, {32, .19f}, {40, .13f}, {48, .10f}, {56, .075f}, {64, .05f},
+     {72, .02f}, {96, .01f}},
+    {{0, .00f}, {8, .12f}, {16, .37f}, {24, .61f}, {32, .76f}, {40, .84f}, {48, .88f}, {56, .92f}, {64, .96f},
+     {72, 1.0f}, {96, 1.0f}},
 };
 
 static constexpr SimpleWaveform SETTLE{

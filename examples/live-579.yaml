@@ -1,5 +1,6 @@
 # Live mode on the 5.79", no network: a clock counting the seconds since boot, a ball bouncing,
-# a ticker scrolling along the bottom, and how many ticks a second the panel is managing. In live
+# a ticker along the bottom that slides each item in and then holds it, and how many ticks a
+# second the panel is managing. In live
 # mode the driver draws the next frame while the panel shows the last, and goes on by itself while
 # the picture changes, so nothing here asks for updates after the first.
 esphome:
@@ -41,7 +42,7 @@ spi:
 
 font:
   - { file: "gfonts://Inter@700", id: f_clock, size: 96, bpp: 2, glyphs: ["0123456789:"] }
-  - { file: "gfonts://Inter@600", id: f_text, size: 22, bpp: 2, glyphsets: [GF_Latin_Core] }
+  - { file: "gfonts://Inter@700", id: f_text, size: 30, bpp: 2, glyphsets: [GF_Latin_Core] }
   - { file: "gfonts://Inter@500", id: f_small, size: 14, bpp: 2, glyphsets: [GF_Latin_Core] }
 
 display:
@@ -52,32 +53,36 @@ display:
     full_update_every: 255
     lambda: |-
       const uint32_t now = millis();
-      static uint32_t last = 0;
+      // Ticks a second, shown once a second so the number itself does not churn.
+      static uint32_t shown_at = 0, ticks = 0;
       static float rate = 0;
-      if (last != 0 && now > last)
-        rate = rate * 0.9f + 100.0f / (now - last);
-      last = now;
+      ticks++;
+      if (now - shown_at >= 1000) {
+        rate = ticks * 1000.0f / (now - shown_at);
+        ticks = 0;
+        shown_at = now;
+      }
       const int w = it.get_width(), h = it.get_height();
       it.fill(Color::WHITE);
       const uint32_t s = now / 1000;
-      it.printf(150, 100, id(f_clock), Color::BLACK, TextAlign::CENTER, "%02u:%02u", (unsigned) (s / 60 % 60),
+      it.printf(150, 96, id(f_clock), Color::BLACK, TextAlign::CENTER, "%02u:%02u", (unsigned) (s / 60 % 60),
                 (unsigned) (s % 60));
-      it.printf(150, 180, id(f_small), Color::BLACK, TextAlign::CENTER, "Live: %.0f ticks a second", rate);
+      it.printf(150, 176, id(f_small), Color::BLACK, TextAlign::CENTER, "Live: %.0f ticks a second", rate);
       // A ball bouncing in the right of the panel.
       auto bounce = [](float p, float span) {
         const float m = fmodf(p, 2 * span);
         return m < span ? m : 2 * span - m;
       };
       const float t = now / 1000.0f;
-      const int r = 26, left = 330, right = w - 12, top = 12, bottom = h - 60;
+      const int r = 24, left = 330, right = w - 12, top = 10, bottom = h - 66;
       it.rectangle(left - r - 4, top, right - left + 2 * r + 8, bottom - top, Color::BLACK);
-      it.filled_circle(left + bounce(t * 120, right - left - 2 * r), top + r + 4 + bounce(t * 80, bottom - top - 2 * r - 8),
-                       r, Color(85, 85, 85));
-      // A ticker along the bottom.
-      static const char *const TICKER = "Bins out tonight   ·   Rain from 15:00   ·   Dinner at 19:00   ·   ";
-      int x1, y1, tw, th;
-      it.get_text_bounds(0, 0, TICKER, id(f_text), TextAlign::TOP_LEFT, &x1, &y1, &tw, &th);
-      const int offset = static_cast<int>(t * 40) % tw;  // 40 px a second: the ink keeps up
-      it.filled_rectangle(0, h - 44, w, 44, Color::BLACK);
-      for (int x = -offset; x < w; x += tw)
-        it.print(x, h - 22, id(f_text), Color::WHITE, TextAlign::CENTER_LEFT, TICKER);
+      it.filled_circle(left + bounce(t * 90, right - left - 2 * r), top + r + 4 + bounce(t * 60, bottom - top - 2 * r - 8),
+                       r, Color::BLACK);
+      // A ticker along the bottom: one item at a time, sliding in from the right over half a
+      // second and then holding still, so the ink settles crisp; the next every four seconds.
+      static const char *const ITEMS[] = {"Bins out tonight", "Rain from 15:00", "Dinner at 19:00", "Tommy is home"};
+      const uint32_t item = now / 4000 % 4, into = now % 4000;
+      const float slide = into < 500 ? 1 - into / 500.0f : 0;
+      it.line(0, h - 52, w, h - 52, Color::BLACK);
+      it.print(12 + static_cast<int>(slide * slide * w), h - 26, id(f_text), Color::BLACK, TextAlign::CENTER_LEFT,
+               ITEMS[item]);

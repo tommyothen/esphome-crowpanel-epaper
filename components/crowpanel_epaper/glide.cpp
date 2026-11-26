@@ -15,9 +15,10 @@
 // black, OLD black and NEW white (WB) pushes it white, and both the same (WW, BB) holds. A glide
 // takes each changed pixel from the level last drawn to its new one with the frames its panel's
 // tuning gives, as a scan for each binary digit of the counts in the window: a pixel that rests
-// between scans loses its way, so as few as possible. A tick is one scan of TICK frames, pushing
-// each pixel towards its level along curves measured for streams of such scans. Either way each
-// pixel's net drive is recorded, and cancelled by scans before the next grey refresh covering it.
+// between scans loses its way, so as few as possible. A tick is one scan of the panel's tick
+// frames, pushing each pixel towards its level along curves measured for streams of such scans.
+// Either way each pixel's net drive is recorded, and cancelled by scans before the next grey
+// refresh covering it.
 
 namespace esphome::crowpanel_epaper {
 
@@ -26,6 +27,8 @@ static const char *const TAG = "crowpanel_epaper";
 // A pixel's drive record holds up to this many frames either way. A glide that would take a pixel
 // further settles instead; a tick holds the pixel until something does.
 static constexpr int MAX_DRIVE = 127;
+// A glide pushes a pixel at most this far, in at most seven scans.
+static constexpr int MAX_DOSE = 96;
 // Each level's lightness, 0 to 255, as a grey refresh draws it.
 static constexpr uint8_t LEVEL_LIGHT[7] = {0, 43, 85, 128, 170, 213, 255};
 
@@ -104,7 +107,8 @@ void CrowPanelBase::set_doses_() {
   const float speed = this->speed_();
   for (int from = 0; from < 7; from++) {
     for (int to = 0; to < 7; to++)
-      this->doses_[from][to] = static_cast<int8_t>(std::clamp<long>(std::lround(tuning.glide[from][to] / speed), -63, 63));
+      this->doses_[from][to] =
+          static_cast<int8_t>(std::clamp<long>(std::lround(tuning.glide[from][to] / speed), -MAX_DOSE, MAX_DOSE));
   }
 }
 
@@ -136,9 +140,9 @@ bool CROWPANEL_FAST CrowPanelBase::plan_glide_() {
       const int drive = this->drive_[i];
       int dose = this->doses_[this->level_at_(this->shown_, x, y)][to];
       if (to == 0 && dose > 0)
-        dose = std::min(63, std::max(dose, -drive));
+        dose = std::min(MAX_DOSE, std::max(dose, -drive));
       if (to == 6 && dose < 0)
-        dose = std::max(-63, std::min(dose, -drive));
+        dose = std::max(-MAX_DOSE, std::min(dose, -drive));
       if (std::abs(drive + dose) > MAX_DRIVE) {
         this->glide_overflowed_ = true;
         return false;
@@ -297,10 +301,11 @@ static float curve_frames(const Curve &curve, float light) {
 void CrowPanelBase::build_tick_tables_() {
   const GlideTuning &tuning = *this->glide_tuning_();
   const float speed = this->speed_();
+  this->tick_frames_ = tuning.tick_frames;
   for (int e = 0; e < 256; e++) {
     const float light = e / 255.0f;
-    const float b = curve_at(tuning.tick_black, curve_frames(tuning.tick_black, light) + TICK * speed);
-    const float w = curve_at(tuning.tick_white, curve_frames(tuning.tick_white, light) + TICK * speed);
+    const float b = curve_at(tuning.tick_black, curve_frames(tuning.tick_black, light) + this->tick_frames_ * speed);
+    const float w = curve_at(tuning.tick_white, curve_frames(tuning.tick_white, light) + this->tick_frames_ * speed);
     this->tick_black_[e] = static_cast<uint8_t>(std::lround(std::min(light, b) * 255));
     this->tick_white_[e] = static_cast<uint8_t>(std::lround(std::max(light, w) * 255));
   }
@@ -330,9 +335,9 @@ inline int CROWPANEL_FAST CrowPanelBase::decide_(uint8_t now, uint8_t to, int dr
   const int push = this->tick_push_[to][now];
   if (push != 0)
     return push;
-  if (to == 0 && drive <= -TICK)
+  if (to == 0 && drive <= -this->tick_frames_)
     return 1;
-  if (to == 6 && drive >= TICK)
+  if (to == 6 && drive >= this->tick_frames_)
     return -1;
   return 0;
 }
@@ -362,7 +367,7 @@ bool CrowPanelBase::plan_tick_() {
   this->fast_loop_.start();
   this->ticking_ = true;
   this->passes_[this->pass_count_] = Pass::DOSE;
-  this->scan_frames_[this->pass_count_] = TICK;
+  this->scan_frames_[this->pass_count_] = this->tick_frames_;
   this->pass_count_++;
   return true;
 }
@@ -462,7 +467,7 @@ void HOT CROWPANEL_FAST CrowPanelBase::tick_rows_(TickRows &rows, const Window &
         const int push = this->decide_(now, to, drive);
         if (push == 0)
           continue;
-        if (std::abs(drive + push * TICK) > MAX_DRIVE) {
+        if (std::abs(drive + push * this->tick_frames_) > MAX_DRIVE) {
           rows.held++;
           continue;
         }
@@ -476,10 +481,10 @@ void HOT CROWPANEL_FAST CrowPanelBase::tick_rows_(TickRows &rows, const Window &
           rows.whites++;
         }
         rows.driven -= drive != 0;
-        drive += push * TICK;
+        drive += push * this->tick_frames_;
         rows.driven += drive != 0;
         const int next = this->decide_(now, to, drive);
-        if (next != 0 && std::abs(drive + next * TICK) <= MAX_DRIVE)
+        if (next != 0 && std::abs(drive + next * this->tick_frames_) <= MAX_DRIVE)
           moving = 1;
       }
       if (moving)

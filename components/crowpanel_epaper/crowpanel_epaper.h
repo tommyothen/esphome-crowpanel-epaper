@@ -107,14 +107,14 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   static void merge(Window &into, const Window &window);
 
   // A panel's glides and ticks, measured on it: for each level (row) to each other (column), the
-  // frames at its scan rate a glide pushes, + black and - white; and the lightness (0 to 1) after
-  // so many frames of ticks, from a settled white pushed black and a settled black pushed white.
+  // frames at its scan rate a glide pushes, + black and - white; the frames a tick pushes; and the
+  // lightness (0 to 1) after so many frames of ticks, from a settled white pushed black and a
+  // settled black pushed white.
   struct GlideTuning {
     int8_t glide[7][7];
+    uint8_t tick_frames;
     float tick_black[11][2], tick_white[11][2];
   };
-  // Frames a tick pushes.
-  static constexpr uint8_t TICK = 4;
 
   // Where a RAM plane's bytes come from: the buffer through a table from a buffer byte (two pixels)
   // to their two bits, or a bit plane as it is.
@@ -298,6 +298,7 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   bool live_update_{false};           // this update is live, not counted towards a full refresh
   bool update_waiting_{false};        // an update was asked for during a tick
   bool tick_tables_ready_{false};
+  uint8_t tick_frames_{4};            // the panel's tick, from its tuning
   bool glide_overflowed_{false};      // the last glide planned would have passed a drive's limit
   bool settle_requested_{false};      // the next partial settles exactly, where the driver can
   uint8_t tick_black_[256]{}, tick_white_[256]{};

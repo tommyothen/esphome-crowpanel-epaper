@@ -52,11 +52,15 @@ display:
     full_update_every: 255
     lambda: |-
       const uint32_t now = millis();
-      static uint32_t last = 0;
+      // Ticks a second, shown once a second so the number itself does not churn.
+      static uint32_t shown_at = 0, ticks = 0;
       static float rate = 0;
-      if (last != 0 && now > last)
-        rate = rate * 0.9f + 100.0f / (now - last);
-      last = now;
+      ticks++;
+      if (now - shown_at >= 1000) {
+        rate = ticks * 1000.0f / (now - shown_at);
+        ticks = 0;
+        shown_at = now;
+      }
       const int w = it.get_width(), h = it.get_height();
       it.fill(Color::WHITE);
       const uint32_t s = now / 1000;

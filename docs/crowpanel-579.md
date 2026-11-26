@@ -184,10 +184,22 @@ Each frame is about 20 ms. None of them left a ghost of the frame before.
   are in, and gives the rows earlier scans left masks in the glass's reading back, in both
   planes, which holds them (WW and BB drive nothing). Writing both planes before every scan
   also keeps the RAM ping-pong out of it.
-- **Tuning.** Not yet measured on this panel: the 4.2"'s glide table and tick curves with a
-  quarter more frames, since its fast partial needs 15 frames at 50 Hz where the 4.2"'s needs
-  12. A glide over the whole panel took 1.14 s and a 200 x 80 box about 0.5 s; a full refresh
-  after it cancelled all 184,644 pixels' drive first. The live demo, a clock, a ball and a
-  ticker scrolling the whole width, runs at about 11 ticks a second: drawing its frame takes
-  31 ms, planning the tick 32 (its per-pixel loop split over both cores), sending 21.
+- **Doses.** At 195 Hz from a settled white (the panel's own full refresh), 6, 12, 18, 24, 30,
+  36, 48, 60 and 72 frames of black given as binary digits left 0.89, 0.67, 0.53, 0.37, 0.30,
+  0.24, 0.12, 0.08 and 0.05; from a settled black, as much white left 0.08, 0.23, 0.39, 0.57,
+  0.72, 0.76, 0.84, 0.89 and 0.92: the ink moves at about two thirds of the 4.2"'s pace.
+  Streams of 4, 6 and 8-frame refreshes went further per frame, 8-frame ones reaching 0.02 and
+  1.00 after 72. The first guess, the 4.2"'s tuning with a quarter more frames, left old digits
+  and a moving ball's trail ghosting: the model had them white long before they were.
+- **Glides.** The table read from those curves landed 0.084 off on average against an exact
+  refresh of the same grid; two rounds of tuning on the camera, weighing the glide back from
+  each glided level too, brought it to 0.056 out and 0.055 back. A full refresh afterwards
+  left every cell within 0.035. Black takes 66 frames and white 90, so a glide may push up to
+  96 frames, in up to seven scans.
+- **Ticks.** 8 frames, not 4: this panel's ticks wait on drawing and planning (about 60 ms)
+  rather than on the 51 ms an 8-frame refresh takes, so the longer push is free. The live
+  demo, a clock, a ball and a ticker, went from 11 to 14 to 16 ticks a second with it, and
+  its ghosting cleared. Setting 0x21 to 00 10, which loaded waveforms need, before the panel's
+  own full refresh turned an all-white RAM into a black panel in the test rig; the driver does
+  not set it there.
 

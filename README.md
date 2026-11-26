@@ -36,12 +36,13 @@ Compared with the panel's built-in black and white OTP refreshes:
 | Partial, first after boot or wake | about 1.3 s | Black and white, charge balanced, changed rows only; greys elsewhere survive (the panel's OTP partial fades them) |
 | Partial, subsequent | 0.4 to 0.5 s | One-way push with per-pixel balance tracking, changed rows only |
 | Partial, nothing changed | about 50 ms | Drawing only; the panel is not driven |
-| Glide (`grey_partials: glide`) | about 0.5 s for a box, 1.14 s whole panel | No flash: each changed pixel goes straight to its new grey; the next full refresh settles them |
-| Live (`grey_partials: live`) | about 11 ticks a second for a clock, a ball and a scrolling ticker | Each tick nudges pixels towards the latest frame |
+| Glide (`grey_partials: glide`) | about 0.5 s for a box, 1.3 s whole panel | No flash: each changed pixel goes straight to its new grey, within about 0.055; the next full refresh settles them |
+| Live (`grey_partials: live`) | 14 to 16 ticks a second for a clock, a ball and a ticker | Each tick nudges pixels towards the latest frame |
 
-The 5.79"'s glides and live ticks run at 195 Hz, its controllers' fastest rate, with
-the 4.2"'s tuning scaled until they are measured on this panel; it has no partial
-window, so its glides settle at the next full refresh.
+The 5.79"'s glides and live ticks run at 195 Hz, its controllers' fastest rate, tuned
+on this panel, whose ink moves at about two thirds of the 4.2"'s pace; its ticks are
+8 frames rather than 4. It has no partial window, so its glides settle at the next
+full refresh.
 
 Panel wiring details, waveform notes and measurements are in
 [docs/crowpanel-579.md](docs/crowpanel-579.md).
@@ -416,8 +417,8 @@ sides of the seam.
 - **CrowPanel 4.2".** V1.0 boards (SSD1683) are not supported, and its frame rate by
   temperature borrows the 5.79" panel's maker's curve until checked in a warm room.
 - **Glides and live ticks** land near enough, not exactly, until the next grey refresh settles
-  them; on the 5.79" that is the next full refresh, and its tuning is the 4.2"'s scaled, not yet
-  measured on its own panel. They need PSRAM: about 330 KB on the 4.2" and 610 KB on the 5.79".
+  them; on the 5.79" that is the next full refresh. Text scrolling continuously smears on either
+  panel: the ink needs 0.3 to 0.5 s to settle, so slide things in and hold them instead. They need PSRAM: about 330 KB on the 4.2" and 610 KB on the 5.79".
 
 ## Prior art
 
