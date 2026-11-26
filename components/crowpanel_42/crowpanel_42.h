@@ -68,6 +68,9 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   void draw_pixel_at(int x, int y, Color color) override;
   // Full refreshes in four greys instead of black and white.
   void set_grey(bool grey) { this->grey_ = grey; }
+  // Partial updates redraw the window around what changed in greys, flashing only it, instead of
+  // pushing the changed pixels to black or white. Needs grey.
+  void set_grey_partials(bool grey_partials) { this->grey_partials_ = grey_partials; }
   // 4, or 7 for three-pass grey refreshes with a half step between each of the four greys.
   void set_grey_levels(uint8_t levels) {
     this->seven_ = levels == 7;
@@ -127,7 +130,11 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   // Send the planes from plane_ on, OLD then NEW, in slices; true once both are out.
   bool send_planes_(const Source &old_source, const Source &new_source);
   bool find_changed_rows_();
+  bool find_changed_window_();
+  bool in_window_(size_t y, size_t bank) const;
+  bool unsettled_in_window_() const;
   void plan_update_();
+  void plan_grey_passes_();
   void record_glass_(bool fast, bool corrected);
   void wind_down_();
   void give_up_();
@@ -141,6 +148,7 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   InternalGPIOPin *hold_reset_pin_{nullptr};
   bool grey_{false};
   bool seven_{false};
+  bool grey_partials_{false};
   Pass passes_[4]{};
   uint8_t pass_count_{0};
   uint8_t pass_index_{0};
@@ -169,6 +177,13 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   bool glass_valid_{false};
   uint32_t unsettled_count_{0};
   uint8_t *pixels_{nullptr};          // the buffer, when it is one block
+  uint8_t *shown_{nullptr};           // the last frame drawn, for grey partials
+  bool shown_valid_{false};
+  bool windowed_{false};              // this update refreshes only window_
+  struct {
+    uint8_t first_bank, last_bank;    // 8-pixel columns
+    uint16_t first_row, last_row;
+  } window_{};
   uint32_t last_colour_{UINT32_MAX};  // draw_pixel_at's last colour and its level
   uint8_t last_level_{0};
 };

@@ -47,6 +47,7 @@ needs no `temperature_sensor`; `id(epd).panel_temperature()` returns it in °C. 
 | Full four greys | about 3.7 s | Even thirds: measured 0.00, 0.33, 0.70 and 0.95 |
 | Full seven greys | about 3.95 s | Measured 0.00, 0.18, 0.34, 0.49, 0.69, 0.84 and 1.00 |
 | Partial, subsequent | about 0.44 s | One-way push with per-pixel balance tracking |
+| Grey partial (`grey_partials`) | about 3.75 s | Greys in the changed window only; the rest untouched |
 
 ```yaml
 display:
@@ -56,6 +57,20 @@ display:
     lambda: |-
       it.print(20, 20, id(font), Color::BLACK, "Hello");
 ```
+
+It also does what the 5.79" cannot: **grey partials**. The UC8276C can confine a
+refresh to a window, so with `grey_partials: true` a partial update redraws, in
+greys, just the window around what changed, and only that window flashes:
+
+```yaml
+display:
+  - platform: crowpanel_42
+    grey: true
+    grey_partials: true  # partials in greys, flashing only what changed
+```
+
+A grey partial takes as long as a grey refresh. Without it, partials are the
+fast black and white ones.
 
 Notes and measurements are in [docs/crowpanel-42.md](docs/crowpanel-42.md).
 

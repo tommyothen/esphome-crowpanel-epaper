@@ -342,6 +342,9 @@ void CrowPanel42::setup() {
     this->unsettled_ = this->glass_ + BIT_PLANE;
     memset(this->unsettled_, 0, BIT_PLANE);
   }
+  // Grey partials compare each frame with the last one drawn, level for level.
+  if (this->grey_partials_ && this->pixels_ != nullptr)
+    this->shown_ = allocator.allocate(this->buffer_length_);
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) {
     glass_rows_valid = false;
     // A reboot part way through, a crash or an update over the air, can leave the controller with
@@ -650,11 +653,25 @@ void CrowPanel42::read_panel_temperature_() {
 
 // Decides what an update is, at its first transfer: a partial refresh when the count says so, fast
 // whenever the driver knows what the glass shows, or a full refresh, after cancelling any fast
-// partials' pushes. A partial in which no row changed has nothing to send or refresh.
+// partials' pushes. A partial in which no row changed has nothing to send or refresh. With grey
+// partials, a partial is a grey refresh of the window around what changed instead.
 void CrowPanel42::plan_update_() {
   this->pass_count_ = 0;
   this->unchanged_ = false;
-  if (this->update_count_ != 0) {
+  this->windowed_ = false;
+  if (this->update_count_ != 0 && this->shown_valid_) {
+    if (!this->find_changed_window_()) {
+      this->unchanged_ = true;
+      return;
+    }
+    this->windowed_ = true;
+    if (this->unsettled_in_window_())
+      this->passes_[this->pass_count_++] = Pass::CORRECT;
+    this->plan_grey_passes_();
+    ESP_LOGV(TAG, "Grey refresh of x %u to %u, y %u to %u", (unsigned) this->window_.first_bank * 8,
+             (unsigned) this->window_.last_bank * 8 + 7, (unsigned) this->window_.first_row,
+             (unsigned) this->window_.last_row);
+  } else if (this->update_count_ != 0) {
     if (!this->find_changed_rows_()) {
       this->unchanged_ = true;
       return;
@@ -667,15 +684,66 @@ void CrowPanel42::plan_update_() {
       this->passes_[this->pass_count_++] = Pass::CORRECT;
     if (!this->grey_) {
       this->passes_[this->pass_count_++] = Pass::BLACK_WHITE;
-    } else if (!this->seven_) {
-      this->passes_[this->pass_count_++] = Pass::GREY;
     } else {
-      this->passes_[this->pass_count_++] = Pass::HALF_TO_BLACK;
-      this->passes_[this->pass_count_++] = Pass::EVEN_GREY;
-      this->passes_[this->pass_count_++] = Pass::HALF_TO_WHITE;
+      this->plan_grey_passes_();
     }
   }
   glass_rows_valid = false;  // until this update has finished
+}
+
+void CrowPanel42::plan_grey_passes_() {
+  if (!this->seven_) {
+    this->passes_[this->pass_count_++] = Pass::GREY;
+  } else {
+    this->passes_[this->pass_count_++] = Pass::HALF_TO_BLACK;
+    this->passes_[this->pass_count_++] = Pass::EVEN_GREY;
+    this->passes_[this->pass_count_++] = Pass::HALF_TO_WHITE;
+  }
+}
+
+// The smallest window holding every pixel whose level differs from the last frame drawn: whole
+// rows down, and across in the controller's 8-pixel banks. False when no pixel differs.
+bool CrowPanel42::find_changed_window_() {
+  int first_row = -1, last_row = -1, first_bank = PLANE_ROW, last_bank = -1;
+  const size_t width = this->row_width_;
+  for (size_t y = 0; y != HEIGHT; y++) {
+    const uint8_t *now = this->pixels_ + y * width, *was = this->shown_ + y * width;
+    if (memcmp(now, was, width) == 0)
+      continue;
+    if (first_row < 0)
+      first_row = y;
+    last_row = y;
+    size_t first = 0, last = width - 1;
+    while (now[first] == was[first])
+      first++;
+    while (now[last] == was[last])
+      last--;
+    first_bank = std::min<int>(first_bank, first / 4);  // four buffer bytes to a bank
+    last_bank = std::max<int>(last_bank, last / 4);
+  }
+  if (first_row < 0)
+    return false;
+  this->window_ = {static_cast<uint8_t>(first_bank), static_cast<uint8_t>(last_bank), static_cast<uint16_t>(first_row),
+                   static_cast<uint16_t>(last_row)};
+  return true;
+}
+
+bool CrowPanel42::in_window_(size_t y, size_t bank) const {
+  return y >= this->window_.first_row && y <= this->window_.last_row && bank >= this->window_.first_bank &&
+         bank <= this->window_.last_bank;
+}
+
+// Whether any pixel a fast partial left out of balance is in the window.
+bool CrowPanel42::unsettled_in_window_() const {
+  if (this->unsettled_count_ == 0)
+    return false;
+  for (size_t y = this->window_.first_row; y <= this->window_.last_row; y++) {
+    for (size_t bank = this->window_.first_bank; bank <= this->window_.last_bank; bank++) {
+      if (this->unsettled_[y * PLANE_ROW + bank] != 0)
+        return true;
+    }
+  }
+  return false;
 }
 
 // Sends the current pass's planes. A partial sends only NEW: OLD already holds what is on the
@@ -758,6 +826,18 @@ void CrowPanel42::refresh_screen(bool partial) {
       this->load_waveform_(this->half_to_white_, this->half_rate_);
       break;
   }
+  // A partial window (0x91, 0x90) confines the refresh: pixels outside it rest at 0 V, which at
+  // VCOM's null leaves them as they are. The gates scan the whole panel (PT_SCAN 1): scanning only
+  // the window's rows let the rest drift by up to 0.5.
+  if (this->windowed_) {
+    const uint16_t x0 = this->window_.first_bank * 8, x1 = this->window_.last_bank * 8 + 7;
+    const uint16_t y0 = this->window_.first_row, y1 = this->window_.last_row;
+    this->command(0x91);
+    this->cmd_data(0x90, {static_cast<uint8_t>(x0 >> 8), static_cast<uint8_t>(x0 & 0xF8), static_cast<uint8_t>(x1 >> 8),
+                          static_cast<uint8_t>(x1 & 0xFF), static_cast<uint8_t>(y0 >> 8),
+                          static_cast<uint8_t>(y0 & 0xFF), static_cast<uint8_t>(y1 >> 8),
+                          static_cast<uint8_t>(y1 & 0xFF), 0x01});
+  }
   this->command(0x12);
   this->next_delay_ = 2;  // BUSY falls a moment after the command
 }
@@ -785,6 +865,9 @@ void CrowPanel42::load_waveform_(const uint8_t *waveform, uint8_t frame_rate) {
 // NEW to OLD itself. The base moves straight on, so loop() writes them, in slices.
 void CrowPanel42::power_off() {
   this->pass_started_ = false;
+  // Out of partial mode before any plane is written: in it, writes wrap within the window.
+  if (this->windowed_)
+    this->command(0x92);
   if (this->pass_index_ + 1 < this->pass_count_) {
     this->pass_index_++;
     this->next_pass_ = true;
@@ -796,11 +879,16 @@ void CrowPanel42::power_off() {
     return;
   this->record_glass_(last == Pass::FAST, this->passes_[0] == Pass::CORRECT);
   this->copying_ = true;
+  if (this->shown_ != nullptr) {
+    memcpy(this->shown_, this->pixels_, this->buffer_length_);
+    this->shown_valid_ = true;
+  }
 }
 
 // The new frame's black and white reading becomes the glass's, row by row: its hash for the next
 // update, and with the bit planes, which pixels a fast partial has pushed out of balance (each
-// change flips its pixel) or that cancelling has put right.
+// change flips its pixel) or that cancelling has put right: all of them, or with a window, those
+// in it.
 void CrowPanel42::record_glass_(bool fast, bool corrected) {
   uint8_t row[PLANE_ROW];
   for (size_t y = 0; y != HEIGHT; y++) {
@@ -811,7 +899,7 @@ void CrowPanel42::record_glass_(bool fast, bool corrected) {
     uint8_t *glass = this->glass_ + y * PLANE_ROW;
     uint8_t *unsettled = this->unsettled_ + y * PLANE_ROW;
     for (size_t i = 0; i != PLANE_ROW; i++) {
-      if (corrected)
+      if (corrected && (!this->windowed_ || this->in_window_(y, i)))
         unsettled[i] = 0;
       if (fast)
         unsettled[i] ^= glass[i] ^ row[i];
@@ -891,6 +979,8 @@ void CrowPanel42::give_up_() {
   this->pass_started_ = false;
   this->next_pass_ = false;
   this->glass_valid_ = false;
+  this->shown_valid_ = false;
+  this->windowed_ = false;
   glass_rows_valid = false;
   if (this->unsettled_ != nullptr)
     memset(this->unsettled_, 0, BIT_PLANE);

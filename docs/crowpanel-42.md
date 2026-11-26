@@ -82,6 +82,16 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   (Waveshare's own sat at 0.26 and 0.75). Seven greys add half steps at 150 Hz: 3, 5 and 4
   frames for levels 2, 3 and 5.
 
+- **Grey partials, through the partial window.** 0x91 and 0x90 confine a refresh to a window,
+  8 pixels at a time across and a row at a time down, and the pixels outside rest at 0 V. With
+  the gates scanning the whole panel (PT_SCAN 1) and VCOM at its null, three windowed grey
+  refreshes left four grey bands outside their windows within 0.01; scanning only the window's
+  rows (PT_SCAN 0) let the bands outside drift by up to 0.5. In partial mode the planes' writes
+  wrap within the window, so the driver writes whole planes first and leaves partial mode
+  (0x92) after each pass. With `grey_partials`, the driver keeps the last frame drawn and
+  refreshes, in greys, the window around every pixel whose level changed: a striped box drew
+  0.92, 0.71, 0.35 and 0.01 and, removed again, left its area at the background's 0.38 and 0.69.
+
 ## Measured
 
 Times are whole updates, drawing included, with logging at DEBUG: VERBOSE logging over the
@@ -96,6 +106,8 @@ since the camera's response is not linear and the lamp lights the panel unevenly
 | Four greys | 3.7 s | 0.00, 0.33, 0.70, 0.95 |
 | Seven greys | 3.95 s | 0.00, 0.18, 0.34, 0.49, 0.69, 0.84, 1.00 |
 | Fast partial, 12 frames one way | 0.44 s | 0.00 black, 0.96 white; greys elsewhere stay |
+| Grey partial (`grey_partials`), four greys | 3.75 s | The window only; outside within 0.01 |
+| Nothing changed | 0.09 s | Nothing driven |
 
 Also checked on the panel:
 

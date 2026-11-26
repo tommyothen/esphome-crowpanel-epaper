@@ -34,6 +34,7 @@ DEPENDENCIES = ["spi"]
 
 CONF_GREY = "grey"
 CONF_GREY_LEVELS = "grey_levels"
+CONF_GREY_PARTIALS = "grey_partials"
 CONF_POWER_PIN = "power_pin"
 CONF_TEMPERATURE_SENSOR = "temperature_sensor"
 
@@ -41,9 +42,11 @@ crowpanel_42_ns = cg.esphome_ns.namespace("crowpanel_42")
 CrowPanel42 = crowpanel_42_ns.class_("CrowPanel42", EPaperBase)
 
 
-def _seven_needs_grey(config):
+def _needs_grey(config):
     if config[CONF_GREY_LEVELS] == 7 and not config[CONF_GREY]:
         raise cv.Invalid("grey_levels: 7 needs grey: true")
+    if config[CONF_GREY_PARTIALS] and not config[CONF_GREY]:
+        raise cv.Invalid("grey_partials needs grey: true")
     return config
 
 
@@ -72,6 +75,10 @@ CONFIG_SCHEMA = cv.All(
             # 7 runs each grey refresh in three passes, with a half step between each of the
             # four greys. Needs grey.
             cv.Optional(CONF_GREY_LEVELS, default=4): cv.one_of(4, 7, int=True),
+            # Partial updates redraw the area that changed in greys, flashing only it (as long as
+            # a grey refresh takes), instead of pushing the changed pixels to black or white (0.4 s).
+            # Needs grey, and PSRAM for a copy of the last frame.
+            cv.Optional(CONF_GREY_PARTIALS, default=False): cv.boolean,
             # A temperature to use instead of the panel's own, which the driver reads each time the
             # supplies come on: the waveforms run faster in the warm and slower in the cold.
             cv.Optional(CONF_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
@@ -80,7 +87,7 @@ CONFIG_SCHEMA = cv.All(
         }
     ),
     cv.has_at_most_one_key(CONF_PAGES, CONF_LAMBDA),
-    _seven_needs_grey,
+    _needs_grey,
 )
 
 FINAL_VALIDATE_SCHEMA = spi.final_validate_device_schema(
@@ -104,6 +111,7 @@ async def to_code(config):
     cg.add(var.set_full_update_every(config[CONF_FULL_UPDATE_EVERY]))
     cg.add(var.set_grey(config[CONF_GREY]))
     cg.add(var.set_grey_levels(config[CONF_GREY_LEVELS]))
+    cg.add(var.set_grey_partials(config[CONF_GREY_PARTIALS]))
     if temperature := config.get(CONF_TEMPERATURE_SENSOR):
         cg.add(var.set_temperature_sensor(await cg.get_variable(temperature)))
 
