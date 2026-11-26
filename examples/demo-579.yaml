@@ -34,7 +34,7 @@ external_components:
   - source:
       type: local
       path: ../components
-    components: [crowpanel_579]
+    components: [crowpanel_579, crowpanel_epaper]
 
 spi:
   clk_pin: GPIO12

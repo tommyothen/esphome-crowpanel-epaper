@@ -451,7 +451,6 @@ void CrowPanel579::refresh_screen(bool partial) {
   }
   const Pass pass = this->passes_[this->pass_index_];
   if (pass == Pass::BLACK_WHITE) {
-    ESP_LOGV(TAG, "Full refresh");
     this->cmd_data(0x3C, {BORDER_FULL});
     this->cmd_data(0x22, {UPDATE_FULL});
     this->command(0x20);
