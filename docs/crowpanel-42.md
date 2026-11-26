@@ -100,7 +100,10 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   grey at 0.96, white; the requested grey partial redrew x 200 to 319 by y 100 to 219, exactly
   where the readings had changed, and put it back at 0.71 against the band's 0.72. The window is
   one rectangle around everything changed, so changes far apart redraw what lies between them
-  too, to the same greys.
+  too, to the same greys. The window and the row hashes are kept through deep sleep, so a fast
+  partial before a sleep is settled after the wake to the band of rows it changed (y 192 to 259
+  for a redrawn number). The first partial after a wake runs without the glass's reading, so
+  it grows the window to the whole panel.
 - **Fast greys.** The grey waveforms above shake a pixel many times and take 3.5 s. With
   `fast_greys`, a grey refresh at 100 Hz shakes every pixel twice (20 frames to black and 20 to
   white) and then pushes once: white to black and back, black the other way, a grey to black, to

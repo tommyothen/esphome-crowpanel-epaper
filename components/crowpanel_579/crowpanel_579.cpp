@@ -451,16 +451,19 @@ void HOT CrowPanel579::draw_pixel_at(int x, int y, Color color) {
   pair = (x & 1) ? (pair & 0xF0) | level : (pair & 0x0F) | level << 4;  // the first pixel in the high nibble
 }
 
-// An update cancels the wind-down.
+// The deadline runs from here. The wind-down is cancelled once the update starts, since an update
+// the lambda draws nothing for never does and would leave nothing to set it again.
 void CrowPanel579::update() {
-  this->cancel_timeout("idle");
-  this->cancel_timeout("sleep");
+  if (this->state_ == epaper_spi::EPaperState::IDLE)
+    this->started_ = millis();
   EPaperBase::update();
 }
 
 // Controllers still awake from the last update need no reset or initialisation: every refresh
 // loads its own waveform and settings, and every plane it reads is written for it.
 bool CrowPanel579::reset() {
+  this->cancel_timeout("idle");
+  this->cancel_timeout("sleep");
   if (this->awake_)
     return true;
   if (!EPaperBase::reset())
@@ -845,7 +848,7 @@ void CrowPanel579::record_glass_(bool fast, bool corrected) {
 // budget is spent.
 void CrowPanel579::loop() {
   const uint32_t start = millis();
-  if (this->state_ != epaper_spi::EPaperState::IDLE && start - this->update_start_time_ > UPDATE_DEADLINE_MS) {
+  if (this->state_ != epaper_spi::EPaperState::IDLE && start - this->started_ > UPDATE_DEADLINE_MS) {
     this->give_up_();
     return;
   }
@@ -855,10 +858,11 @@ void CrowPanel579::loop() {
         continue;
       this->copying_ = false;
     }
-    // Each pass is a full update to the base, and the count goes back so they count as one.
+    // Each pass is an update to the base, which counts it, so the count goes back a step between
+    // passes and they count as one.
     if (this->next_pass_ && this->state_ == epaper_spi::EPaperState::DEEP_SLEEP) {
       this->next_pass_ = false;
-      this->update_count_ = 0;
+      this->update_count_ = (this->update_count_ + this->full_update_every_ - 1) % this->full_update_every_;
       this->set_state_(epaper_spi::EPaperState::RESET);
     }
     const auto state = this->state_;

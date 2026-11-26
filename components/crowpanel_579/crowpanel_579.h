@@ -70,7 +70,8 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   // 4, or 7 for three-pass grey refreshes with a half step between each of the four greys.
   void set_grey_levels(uint8_t levels) {
     this->seven_ = levels == 7;
-    this->last_colour_ = UINT32_MAX;  // levels map differently now
+    this->last_colour_ = UINT32_MAX;  // levels map differently now, but white is 6 in both
+    this->last_level_ = 6;
   }
   // The pin that switches the panel's power, held high through deep sleep.
   void set_power_pin(InternalGPIOPin *pin) { this->power_pin_ = pin; }
@@ -166,8 +167,9 @@ class CrowPanel579 : public epaper_spi::EPaperBase {
   bool glass_valid_{false};
   uint32_t unsettled_count_{0};
   uint8_t *pixels_{nullptr};          // the buffer, when it is one block
-  uint32_t last_colour_{UINT32_MAX};  // draw_pixel_at's last colour and its level
-  uint8_t last_level_{0};
+  uint32_t last_colour_{UINT32_MAX};  // draw_pixel_at's last colour and its level: white, all ones
+  uint8_t last_level_{6};
+  uint32_t started_{0};  // when the update running began
 };
 
 }  // namespace esphome::crowpanel_579
