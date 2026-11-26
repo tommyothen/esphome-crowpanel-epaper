@@ -269,8 +269,8 @@ sides of the seam.
 - **Sleeping mid-update.** Entering deep sleep while `epaper_spi.is_updating`
   is true leaves any unsettled fast-partial pixels uncancelled and forces a
   full refresh on the next wake.
-- **CrowPanel 4.2".** V1.0 boards (SSD1683) are not supported, and the temperature bands
-  are borrowed from the 5.79" panel's maker until checked in a warm room.
+- **CrowPanel 4.2".** V1.0 boards (SSD1683) are not supported, and its frame rate by
+  temperature borrows the 5.79" panel's maker's curve until checked in a warm room.
 
 ## Prior art
 

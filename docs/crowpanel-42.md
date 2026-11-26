@@ -17,9 +17,14 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
 - **The panel's temperature.** The controller senses it as the supplies come on (TS_AUTO),
   and the driver reads it then with 0x40, through a second device on the SPI bus in 3-wire
   half-duplex mode: the board wires the panel's data line to the bus's MOSI pin alone. It read
-  11 °C, which the flat's own sensors agreed with to 0.4 °C. Tuned at 11 °C and 50 Hz, the
-  waveforms run at 50 Hz below 12 °C, 70 Hz to 21, 100 Hz to 33 and 140 Hz above: the 5.79"
-  panel's maker's ratios, which this panel's blank OTP cannot confirm.
+  11 °C, which the flat's own sensors agreed with to 0.4 °C.
+- **Frame rate by temperature.** The waveforms were tuned at 11 °C and 50 Hz. The frame rate
+  follows the 5.79" panel's maker's curve (its full refresh ran 4.5 s at 10 °C, 3.28 s at 16.5,
+  2.27 s at 26 and 1.66 s at 35), interpolated and scaled to 50 Hz at 11 °C: 55 Hz at 13 °C, 65
+  at 16, 75 at 20, 95 at 26, 130 from 35. The controller's 5 Hz steps keep it smooth; bands
+  would put this panel's tuning point on an edge, where one degree moved every waveform by
+  40%. The seven-grey half steps scale with it, and past 200 Hz run about half their frames
+  at half the rate. This panel's blank OTP cannot confirm the curve.
 - **The data line reads back.** With GPIO11 switched to an input after a read
   command, the status flags read 0x13 idle and 0x15 with the supplies on, and
   0x40 returns the panel's own temperature in whole degrees (11 °C on the first
@@ -78,4 +83,4 @@ since the camera's response is not linear and the lamp lights the panel unevenly
 
 ## Still open
 
-- Check the temperature bands in a warm room: they borrow the 5.79" panel's maker's curve.
+- Check the frame-rate curve in a warm room: it borrows the 5.79" panel's maker's.

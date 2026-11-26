@@ -26,9 +26,12 @@ static constexpr uint32_t MAX_ACTIVE_MS = 60000;
 // An update the panel has not finished in this long has failed.
 static constexpr uint32_t UPDATE_DEADLINE_MS = 20000;
 
-// Frame rates (0x30): 5 Hz steps from 5 Hz at 0x00.
-static constexpr uint8_t FRAMES_50_HZ = 0x09, FRAMES_70_HZ = 0x0D, FRAMES_100_HZ = 0x13, FRAMES_130_HZ = 0x18,
-                         FRAMES_140_HZ = 0x19;
+// Frame rates (0x30): 5 Hz steps from 5 Hz at 0x00 to 120 Hz at 0x17, then 10 Hz steps to 200 Hz.
+static constexpr uint8_t FRAMES_50_HZ = 0x09;
+static constexpr float MAX_HZ = 200;
+// This panel's waveforms were tuned at 11 °C: the self-balanced ones at 50 Hz, the seven-grey
+// half steps at 130 Hz.
+static constexpr float TUNED_CELSIUS = 11, TUNED_HZ = 50, TUNED_HALF_HZ = 130;
 
 // A waveform is five tables of six groups of seven bytes, in the SSD1683's order: VCOM, then one
 // for each pixel state, named by the pixel's NEW bit then its OLD bit, 1 white: WW, BW (white to
@@ -126,8 +129,8 @@ static constexpr EvenGreyWaveform EVEN_GREY{};
 // white, which a push and a pull leave white) from dark grey (WB), level 3 from dark grey (BW),
 // level 5 from light grey (WW), or for levels 0, 1 and 4, a one-frame trim (BB), towards white
 // before and towards black after. They run at 130 Hz, where at 50 Hz in the middle pass 2, 4 and 3
-// frames land levels 2, 3 and 5 at 0.33, 0.52 and 0.83 on the camera. One set of lengths for each
-// temperature band.
+// frames land levels 2, 3 and 5 at 0.33, 0.52 and 0.83 on the camera. In the warm, where that rate
+// would pass the controller's 200 Hz, about half the frames at half the rate.
 struct HalfStepWaveform {
   uint8_t bytes[WAVEFORM];
   constexpr HalfStepWaveform(bool white, uint8_t level_2, uint8_t level_3, uint8_t level_5) : bytes() {
@@ -150,11 +153,8 @@ struct HalfStepWaveform {
     bytes[TABLE_BB * TABLE + 4] = (white ? 0x40 : 0x80) | TRIM;  // BB: towards white before, black after
   }
 };
-// For the temperature bands at 50, 70, 100 and 140 Hz: the tuned lengths scaled to each.
-static constexpr HalfStepWaveform HALF_TO_BLACK[4] = {
-    {false, 2, 4, 3}, {false, 1, 3, 2}, {false, 1, 2, 2}, {false, 1, 1, 1}};
-static constexpr HalfStepWaveform HALF_TO_WHITE[4] = {
-    {true, 2, 4, 3}, {true, 1, 3, 2}, {true, 1, 2, 2}, {true, 1, 1, 1}};
+static constexpr HalfStepWaveform HALF_TO_BLACK[2] = {{false, 2, 4, 3}, {false, 1, 2, 2}};
+static constexpr HalfStepWaveform HALF_TO_WHITE[2] = {{true, 2, 4, 3}, {true, 1, 2, 2}};
 
 // Waveforms of group 0 only, with phases A to C of the given lengths and, for each table, the level
 // in each phase (0 none, 1 VSH, black, 2 VSL, white).
@@ -243,19 +243,15 @@ static constexpr bool balanced(std::initializer_list<const uint8_t *> waveforms)
 }
 static_assert(vcom_lasts(PARTIAL.bytes) && vcom_lasts(GREY_LUT) && vcom_lasts(EVEN_GREY.bytes) &&
                   vcom_lasts(BLACK_WHITE.bytes) && vcom_lasts(HALF_TO_BLACK[0].bytes) &&
-                  vcom_lasts(HALF_TO_BLACK[1].bytes) && vcom_lasts(HALF_TO_BLACK[2].bytes) &&
-                  vcom_lasts(HALF_TO_BLACK[3].bytes) && vcom_lasts(HALF_TO_WHITE[0].bytes) &&
-                  vcom_lasts(HALF_TO_WHITE[1].bytes) && vcom_lasts(HALF_TO_WHITE[2].bytes) &&
-                  vcom_lasts(HALF_TO_WHITE[3].bytes),
+                  vcom_lasts(HALF_TO_BLACK[1].bytes) && vcom_lasts(HALF_TO_WHITE[0].bytes) &&
+                  vcom_lasts(HALF_TO_WHITE[1].bytes),
               "VCOM's table must run as long as every pixel's");
 static_assert(balanced({PARTIAL.bytes}), "the partial waveform must leave no net drive on a pixel");
 static_assert(balanced({BLACK_WHITE.bytes}), "the black and white waveform must leave no net drive on a pixel");
 static_assert(balanced({GREY_LUT}), "the grey waveform must leave no net drive on a pixel");
 static_assert(balanced({EVEN_GREY.bytes}), "the even grey waveform must leave no net drive on a pixel");
 static_assert(balanced({HALF_TO_BLACK[0].bytes, HALF_TO_WHITE[0].bytes}) &&
-                  balanced({HALF_TO_BLACK[1].bytes, HALF_TO_WHITE[1].bytes}) &&
-                  balanced({HALF_TO_BLACK[2].bytes, HALF_TO_WHITE[2].bytes}) &&
-                  balanced({HALF_TO_BLACK[3].bytes, HALF_TO_WHITE[3].bytes}),
+                  balanced({HALF_TO_BLACK[1].bytes, HALF_TO_WHITE[1].bytes}),
               "the half steps must cancel");
 
 // A white pixel out of balance got there by a fast partial's push towards white (WB), a black one
@@ -528,39 +524,50 @@ bool CrowPanel42::find_changed_rows_() {
   return false;
 }
 
+// The 5.79" panel's maker's curve: how long its full refresh ran at each temperature (°C, s), read
+// from its OTP with the temperature faked. Linear between the points, flat beyond them.
+static constexpr float CURVE[][2] = {{10, 4.5f}, {16.5f, 3.28f}, {26, 2.27f}, {35, 1.66f}};
+static constexpr int CURVE_POINTS = sizeof CURVE / sizeof CURVE[0];
+
+static constexpr float refresh_seconds(float celsius) {
+  if (celsius <= CURVE[0][0])
+    return CURVE[0][1];
+  for (int i = 1; i < CURVE_POINTS; i++) {
+    if (celsius <= CURVE[i][0]) {
+      const float along = (celsius - CURVE[i - 1][0]) / (CURVE[i][0] - CURVE[i - 1][0]);
+      return CURVE[i - 1][1] + along * (CURVE[i][1] - CURVE[i - 1][1]);
+    }
+  }
+  return CURVE[CURVE_POINTS - 1][1];
+}
+
+// The controller's nearest frame rate to hz, as its 0x30 code, and back.
+static uint8_t frame_rate_code(float hz) {
+  if (hz <= 122.5f)
+    return std::clamp<long>(std::lround(hz / 5) - 1, 0, 0x17);
+  return std::min<long>(0x17 + std::lround((hz - 120) / 10), 0x1F);
+}
+static float frame_rate_hz(uint8_t code) { return code <= 0x17 ? 5.0f * (code + 1) : 120 + 10.0f * (code - 0x17); }
+
 // Particles move faster in the warm and slower in the cold, so the self-balanced waveforms run at
 // a frame rate for the temperature, which stretches or shrinks every frame alike and leaves their
-// balance as it is. This panel's waveforms were tuned at 11 °C, at 50 Hz. Its maker publishes no
-// curve and its OTP is blank, so the bands borrow the 5.79" panel's maker's, whose waveforms ran
-// 4.5, 3.3, 2.3 and 1.7 s below 12 °C, to 21, to 33 and above, scaled so the band holding 11 °C
-// runs at 50 Hz. The temperature is the one given, or else the panel's own; without either, 50 Hz.
-uint8_t CrowPanel42::frame_rate_for_temperature_() const {
+// balance as it is. This panel's maker publishes no curve and its OTP is blank, so the rate
+// follows the 5.79" panel's maker's, scaled to 50 Hz at 11 °C where these were tuned: about 65 Hz at
+// 16 °C, 75 at 20, 95 at 26 and 130 from 35. The controller's 5 Hz steps keep it smooth rather than
+// banded. The temperature is the one given, or else the panel's own; without either, 50 Hz.
+void CrowPanel42::set_frame_rates_() {
   float celsius = this->panel_celsius_;
 #ifdef USE_SENSOR
   if (this->temperature_ != nullptr && !std::isnan(this->temperature_->state))
     celsius = this->temperature_->state;
 #endif
-  if (std::isnan(celsius) || celsius < 12)
-    return FRAMES_50_HZ;
-  if (celsius < 21)
-    return FRAMES_70_HZ;
-  if (celsius < 33)
-    return FRAMES_100_HZ;
-  return FRAMES_140_HZ;
-}
-
-// The temperature band of this update's frame rate, coldest first.
-int CrowPanel42::band_() const {
-  switch (this->frame_rate_) {
-    case FRAMES_70_HZ:
-      return 1;
-    case FRAMES_100_HZ:
-      return 2;
-    case FRAMES_140_HZ:
-      return 3;
-    default:
-      return 0;
-  }
+  const float hz = std::isnan(celsius) ? TUNED_HZ
+                                       : TUNED_HZ * refresh_seconds(TUNED_CELSIUS) / refresh_seconds(celsius);
+  this->frame_rate_ = frame_rate_code(hz);
+  const float half_hz = TUNED_HALF_HZ * frame_rate_hz(this->frame_rate_) / TUNED_HZ;
+  this->half_short_ = half_hz > MAX_HZ;
+  this->half_rate_ = frame_rate_code(this->half_short_ ? half_hz / 2 : half_hz);
+  ESP_LOGV(TAG, "%.0f Hz for %.0f °C", frame_rate_hz(this->frame_rate_), celsius);
 }
 
 // A second device on the bus for reading: the board wires the panel's data line to the bus's MOSI
@@ -690,7 +697,7 @@ void CrowPanel42::refresh_screen(bool partial) {
     this->read_panel_temperature_();
   }
   if (this->pass_index_ == 0)
-    this->frame_rate_ = this->frame_rate_for_temperature_();
+    this->set_frame_rates_();
   switch (this->passes_[this->pass_index_]) {
     // A fast partial's push may be cancelled hours later at another temperature, so the push, its
     // cancelling and its settling always run at 50 Hz: a frame's drive has to match exactly.
@@ -711,13 +718,13 @@ void CrowPanel42::refresh_screen(bool partial) {
       this->load_waveform_(GREY_LUT, this->frame_rate_);
       break;
     case Pass::HALF_TO_BLACK:
-      this->load_waveform_(HALF_TO_BLACK[this->band_()].bytes, FRAMES_130_HZ);
+      this->load_waveform_(HALF_TO_BLACK[this->half_short_].bytes, this->half_rate_);
       break;
     case Pass::EVEN_GREY:
       this->load_waveform_(EVEN_GREY.bytes, this->frame_rate_);
       break;
     case Pass::HALF_TO_WHITE:
-      this->load_waveform_(HALF_TO_WHITE[this->band_()].bytes, FRAMES_130_HZ);
+      this->load_waveform_(HALF_TO_WHITE[this->half_short_].bytes, this->half_rate_);
       break;
   }
   this->command(0x12);

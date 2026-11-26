@@ -119,8 +119,8 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   void send_init_();
   // Load a waveform's five tables at a frame rate.
   void load_waveform_(const uint8_t *waveform, uint8_t frame_rate);
-  uint8_t frame_rate_for_temperature_() const;
-  int band_() const;
+  // This update's frame rates, from the temperature.
+  void set_frame_rates_();
   void add_reader_();
   void read_panel_temperature_();
   // Send the planes from plane_ on, OLD then NEW, in slices; true once both are out.
@@ -150,6 +150,8 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   bool ready_{false};           // the controller has been reset and initialised
   bool supplies_on_{false};     // the ±15 V supplies are on
   uint8_t frame_rate_{0x09};    // this update's, for its temperature
+  uint8_t half_rate_{0x18};     // the seven-grey half steps'
+  bool half_short_{false};      // the half steps run their shorter lengths, past 200 Hz
   bool read_temperature_{false};  // the supplies have just come on, so the sensor has a new reading
   float panel_celsius_{NAN};
   spi_device_handle_t reader_{nullptr};
