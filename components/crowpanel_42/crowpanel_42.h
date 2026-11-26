@@ -71,6 +71,9 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   // Partial updates redraw the window around what changed in greys, flashing only it, instead of
   // pushing the changed pixels to black or white. Needs grey.
   void set_grey_partials(bool grey_partials) { this->grey_partials_ = grey_partials; }
+  // Grey refreshes in one shake, about 1 s for four greys rather than 3.7, leaving a little more of
+  // the picture before.
+  void set_fast_greys(bool fast_greys) { this->fast_greys_ = fast_greys; }
   // 4, or 7 for three-pass grey refreshes with a half step between each of the four greys.
   void set_grey_levels(uint8_t levels) {
     this->seven_ = levels == 7;
@@ -151,6 +154,7 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   bool grey_{false};
   bool seven_{false};
   bool grey_partials_{false};
+  bool fast_greys_{false};
   Pass passes_[4]{};
   uint8_t pass_count_{0};
   uint8_t pass_index_{0};
@@ -164,6 +168,9 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   uint8_t half_rate_{0x1A};     // the seven-grey half steps', and the steps themselves
   uint8_t half_to_black_[WAVEFORM]{};
   uint8_t half_to_white_[WAVEFORM]{};
+  uint8_t fast_rate_{0x13};     // the fast greys', and the waveforms at it
+  uint8_t fast_four_[WAVEFORM]{};
+  uint8_t fast_even_[WAVEFORM]{};
   bool read_temperature_{false};  // the supplies have just come on, so the sensor has a new reading
   float panel_celsius_{NAN};
   spi_device_handle_t reader_{nullptr};

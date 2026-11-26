@@ -35,6 +35,7 @@ DEPENDENCIES = ["spi"]
 CONF_GREY = "grey"
 CONF_GREY_LEVELS = "grey_levels"
 CONF_GREY_PARTIALS = "grey_partials"
+CONF_FAST_GREYS = "fast_greys"
 CONF_POWER_PIN = "power_pin"
 CONF_TEMPERATURE_SENSOR = "temperature_sensor"
 
@@ -47,6 +48,8 @@ def _needs_grey(config):
         raise cv.Invalid("grey_levels: 7 needs grey: true")
     if config[CONF_GREY_PARTIALS] and not config[CONF_GREY]:
         raise cv.Invalid("grey_partials needs grey: true")
+    if config[CONF_FAST_GREYS] and not config[CONF_GREY]:
+        raise cv.Invalid("fast_greys needs grey: true")
     return config
 
 
@@ -79,6 +82,9 @@ CONFIG_SCHEMA = cv.All(
             # a grey refresh takes), instead of pushing the changed pixels to black or white (0.4 s).
             # Needs grey, and PSRAM for a copy of the last frame.
             cv.Optional(CONF_GREY_PARTIALS, default=False): cv.boolean,
+            # Grey refreshes in one shake: four greys in about 1 s rather than 3.7, seven in 1.25
+            # rather than 3.95, grey partials likewise, leaving a little more of the picture before.
+            cv.Optional(CONF_FAST_GREYS, default=False): cv.boolean,
             # A temperature to use instead of the panel's own, which the driver reads each time the
             # supplies come on: the waveforms run faster in the warm and slower in the cold.
             cv.Optional(CONF_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
@@ -112,6 +118,7 @@ async def to_code(config):
     cg.add(var.set_grey(config[CONF_GREY]))
     cg.add(var.set_grey_levels(config[CONF_GREY_LEVELS]))
     cg.add(var.set_grey_partials(config[CONF_GREY_PARTIALS]))
+    cg.add(var.set_fast_greys(config[CONF_FAST_GREYS]))
     if temperature := config.get(CONF_TEMPERATURE_SENSOR):
         cg.add(var.set_temperature_sensor(await cg.get_variable(temperature)))
 

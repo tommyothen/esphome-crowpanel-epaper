@@ -32,6 +32,8 @@ static constexpr float MAX_HZ = 200;
 // This panel's waveforms were tuned at 11 °C: the self-balanced ones at 50 Hz, the seven-grey
 // half steps at 150 Hz.
 static constexpr float TUNED_CELSIUS = 11, TUNED_HZ = 50, TUNED_HALF_HZ = 150;
+// The fast greys were tuned there at 100 Hz.
+static constexpr float TUNED_FAST_HZ = 100;
 
 // A waveform is five tables of six groups of seven bytes, in the SSD1683's order: VCOM, then one
 // for each pixel state, named by the pixel's NEW bit then its OLD bit, 1 white: WW, BW (white to
@@ -151,6 +153,43 @@ static constexpr GreyWaveform FOUR_GREY{DARK_THIRD, LIGHT};
 // The seven-grey refresh's middle pass: black, a sixth, two thirds and white.
 static constexpr GreyWaveform EVEN_GREY{DARK_SIXTH, LIGHT};
 
+// Fast greys: one shake, not Waveshare's many. White is pushed to black for `reset` frames and back
+// to white for as many, black the other way round, and a grey to black, to white, and to black
+// again for its last few frames, which set where it lands. Every table runs 2 * reset frames, and
+// VCOM with them. At 100 Hz that is 0.8 to 1 s against the slow greys' 3.5, but it leaves a little
+// more of the picture before: across four bars drawn, drawn again, reversed and back, the fast
+// greys moved by up to 0.09 with a 40-frame reset, 0.06 with 50 and 0.05 with 60, the slow ones
+// by up to 0.03. After a 40-frame white push, 5 frames of black land at 0.68 and 9 at 0.33.
+struct FastGreyWaveform {
+  uint8_t bytes[WAVEFORM];
+  constexpr FastGreyWaveform(uint8_t reset, uint8_t light, uint8_t dark) : bytes() {
+    constexpr uint8_t BLACK = 0x40, WHITE = 0x80;
+    const uint8_t phases[5][3] = {
+        {reset, reset, 0},                                                                       // VCOM
+        {static_cast<uint8_t>(BLACK | reset), static_cast<uint8_t>(WHITE | reset), 0},          // WW: white
+        {static_cast<uint8_t>(BLACK | (reset - light)), static_cast<uint8_t>(WHITE | reset),
+         static_cast<uint8_t>(BLACK | light)},                                                  // BW: light
+        {static_cast<uint8_t>(BLACK | (reset - dark)), static_cast<uint8_t>(WHITE | reset),
+         static_cast<uint8_t>(BLACK | dark)},                                                   // WB: dark
+        {static_cast<uint8_t>(WHITE | reset), static_cast<uint8_t>(BLACK | reset), 0},          // BB: black
+    };
+    for (int t = 0; t < 5; t++) {
+      bytes[t * TABLE] = 1;
+      for (int p = 0; p < 3; p++)
+        bytes[t * TABLE + 1 + p] = phases[t][p];
+      bytes[t * TABLE + 5] = 1;
+      bytes[t * TABLE + 6] = 1;
+    }
+  }
+};
+static constexpr uint8_t FAST_FOUR_RESET = 50, FAST_EVEN_RESET = 40, FAST_LIGHT = 5, FAST_DARK_THIRD = 9,
+                         FAST_DARK_SIXTH = 11;
+// Four greys, with the 50-frame reset: black, dark grey at 0.30 to 0.36, light at 0.67 to 0.72,
+// white, in 1 s. The seven-grey middle pass, dark grey at a sixth, with its half steps of 3, 5 and 3
+// frames at 150 Hz: 0.01, 0.15, 0.30, 0.49, 0.69, 0.83 and 1.03.
+static constexpr FastGreyWaveform FAST_FOUR{FAST_FOUR_RESET, FAST_LIGHT, FAST_DARK_THIRD};
+static constexpr FastGreyWaveform FAST_EVEN{FAST_EVEN_RESET, FAST_LIGHT, FAST_DARK_SIXTH};
+
 // The seven-grey refresh's outer passes: a half step, towards black before the middle pass and
 // towards white after it, so the two cancel. The pixel's two RAM bits say which: level 2 (and
 // white, which a push and a pull leave white) from dark grey (WB), level 3 from dark grey (BW),
@@ -181,6 +220,7 @@ struct HalfStepWaveform {
   }
 };
 static constexpr uint8_t HALF_LENGTHS[3] = {3, 5, 4};  // levels 2, 3 and 5
+static constexpr uint8_t FAST_HALF_LENGTHS[3] = {3, 5, 3};  // after the fast middle pass
 static constexpr HalfStepWaveform HALF_TO_BLACK{false, HALF_LENGTHS[0], HALF_LENGTHS[1], HALF_LENGTHS[2]};
 static constexpr HalfStepWaveform HALF_TO_WHITE{true, HALF_LENGTHS[0], HALF_LENGTHS[1], HALF_LENGTHS[2]};
 
@@ -267,6 +307,9 @@ static_assert(balanced({PARTIAL.bytes}), "the partial waveform must leave no net
 static_assert(balanced({BLACK_WHITE.bytes}), "the black and white waveform must leave no net drive on a pixel");
 static_assert(balanced({FOUR_GREY.bytes}), "the grey waveform must leave no net drive on a pixel");
 static_assert(balanced({EVEN_GREY.bytes}), "the even grey waveform must leave no net drive on a pixel");
+static_assert(balanced({FAST_FOUR.bytes}) && balanced({FAST_EVEN.bytes}) && vcom_lasts(FAST_FOUR.bytes) &&
+                  vcom_lasts(FAST_EVEN.bytes),
+              "the fast greys must leave no net drive on a pixel, and VCOM last as long");
 static_assert(balanced({HALF_TO_BLACK.bytes, HALF_TO_WHITE.bytes}),
               "the half steps must cancel");
 
@@ -596,14 +639,28 @@ void CrowPanel42::set_frame_rates_() {
   const float hz = std::isnan(celsius) ? TUNED_HZ
                                        : TUNED_HZ * refresh_seconds(TUNED_CELSIUS) / refresh_seconds(celsius);
   this->frame_rate_ = frame_rate_code(hz);
+  const float speed = frame_rate_hz(this->frame_rate_) / TUNED_HZ;
+  // The fast greys likewise; past 200 Hz they run at 200 Hz with their frames scaled to match, built
+  // here in the same balanced shape.
+  if (this->fast_greys_) {
+    const float fast_hz = TUNED_FAST_HZ * speed;
+    const float fast_scale = fast_hz > MAX_HZ ? MAX_HZ / fast_hz : 1;
+    this->fast_rate_ = frame_rate_code(fast_hz * fast_scale);
+    const auto frames = [fast_scale](uint8_t n) { return static_cast<uint8_t>(std::max<long>(1, std::lround(n * fast_scale))); };
+    memcpy(this->fast_four_,
+           FastGreyWaveform(frames(FAST_FOUR_RESET), frames(FAST_LIGHT), frames(FAST_DARK_THIRD)).bytes, WAVEFORM);
+    memcpy(this->fast_even_,
+           FastGreyWaveform(frames(FAST_EVEN_RESET), frames(FAST_LIGHT), frames(FAST_DARK_SIXTH)).bytes, WAVEFORM);
+  }
   // The half steps keep their length against the middle pass's frames: at its rate, faster, or
   // past 200 Hz at 200 Hz with fewer frames. Both are built from the same lengths, so they cancel.
-  const float half_hz = TUNED_HALF_HZ * frame_rate_hz(this->frame_rate_) / TUNED_HZ;
+  const uint8_t *half_lengths = this->fast_greys_ ? FAST_HALF_LENGTHS : HALF_LENGTHS;
+  const float half_hz = TUNED_HALF_HZ * speed;
   const float scale = half_hz > MAX_HZ ? MAX_HZ / half_hz : 1;
   this->half_rate_ = frame_rate_code(half_hz * scale);
   uint8_t lengths[3];
   for (int i = 0; i < 3; i++)
-    lengths[i] = std::max<long>(1, std::lround(HALF_LENGTHS[i] * scale));
+    lengths[i] = std::max<long>(1, std::lround(half_lengths[i] * scale));
   lengths[0] = std::min({lengths[0], lengths[1], lengths[2]});
   memcpy(this->half_to_black_, HalfStepWaveform(false, lengths[0], lengths[1], lengths[2]).bytes, WAVEFORM);
   memcpy(this->half_to_white_, HalfStepWaveform(true, lengths[0], lengths[1], lengths[2]).bytes, WAVEFORM);
@@ -851,13 +908,21 @@ void CrowPanel42::refresh_screen(bool partial) {
       this->load_waveform_(BLACK_WHITE.bytes, this->frame_rate_);
       break;
     case Pass::GREY:
-      this->load_waveform_(FOUR_GREY.bytes, this->frame_rate_);
+      if (this->fast_greys_) {
+        this->load_waveform_(this->fast_four_, this->fast_rate_);
+      } else {
+        this->load_waveform_(FOUR_GREY.bytes, this->frame_rate_);
+      }
       break;
     case Pass::HALF_TO_BLACK:
       this->load_waveform_(this->half_to_black_, this->half_rate_);
       break;
     case Pass::EVEN_GREY:
-      this->load_waveform_(EVEN_GREY.bytes, this->frame_rate_);
+      if (this->fast_greys_) {
+        this->load_waveform_(this->fast_even_, this->fast_rate_);
+      } else {
+        this->load_waveform_(EVEN_GREY.bytes, this->frame_rate_);
+      }
       break;
     case Pass::HALF_TO_WHITE:
       this->load_waveform_(this->half_to_white_, this->half_rate_);

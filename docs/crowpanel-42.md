@@ -97,6 +97,16 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   the band of rows whose levels changed, at full width, and an update that changed nothing drives
   nothing.
 
+- **Fast greys.** The grey waveforms above shake a pixel many times, which erases the picture
+  before well and takes 3.5 s. With `fast_greys`, a grey refresh shakes once at 100 Hz: white
+  pushed to black and back, black the other way, and a grey to black, to white, then to black for
+  its last few frames. After a 40-frame push to white, 1 to 8 frames of black landed at 0.99,
+  0.96, 0.90, 0.82, 0.68, 0.62, 0.54 and 0.44. Four greys use a 50-frame push and 5 and 9 frames,
+  1 s; seven greys a 40-frame push and 5 and 11 in the middle pass, with half steps of 3, 5 and 3
+  frames at 150 Hz. Across four bars drawn, drawn again, reversed and back, the fast four greys
+  moved with what was there before by up to 0.09 with a 40-frame push, 0.06 with 50 and 0.05 with
+  60; the slow ones by up to 0.03.
+
 ## Measured
 
 Times are whole updates, drawing included, with logging at DEBUG: VERBOSE logging over the
@@ -112,6 +122,8 @@ since the camera's response is not linear and the lamp lights the panel unevenly
 | Seven greys | 3.95 s | 0.00, 0.18, 0.34, 0.49, 0.69, 0.84, 1.00 |
 | Fast partial, 12 frames one way | 0.44 s | 0.00 black, 0.96 white; greys elsewhere stay |
 | Grey partial (`grey_partials`), four greys | 3.75 s | The window only; outside within 0.01 |
+| Four fast greys (`fast_greys`) | 1.2 s | 0.00, 0.30, 0.70, 1.00 |
+| Seven fast greys (`fast_greys`) | 1.24 s | 0.00, 0.14, 0.31, 0.48, 0.68, 0.81, 0.99 |
 | Nothing changed | 0.09 s | Nothing driven |
 
 Also checked on the panel:
