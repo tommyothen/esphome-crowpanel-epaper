@@ -23,8 +23,8 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   2.27 s at 26 and 1.66 s at 35), interpolated and scaled to 50 Hz at 11 °C: 55 Hz at 13 °C, 65
   at 16, 75 at 20, 95 at 26, 130 from 35. The controller's 5 Hz steps keep it smooth; bands
   would put this panel's tuning point on an edge, where one degree moved every waveform by
-  40%. The seven-grey half steps scale with it, and past 200 Hz run about half their frames
-  at half the rate. This panel's blank OTP cannot confirm the curve.
+  40%. The seven-grey half steps scale with it, and past 200 Hz run at 200 Hz with their
+  frames scaled to match. This panel's blank OTP cannot confirm the curve.
 - **The data line reads back.** With GPIO11 switched to an input after a read
   command, the status flags read 0x13 idle and 0x15 with the supplies on, and
   0x40 returns the panel's own temperature in whole degrees (11 °C on the first
@@ -48,7 +48,18 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   standby through the ESP's deep sleep (about 26 µA against 0.5 µA by the
   datasheet), since how long the RAM lasts in deep sleep is not documented.
 - **Voltages.** Elecrow's power setting, 0x01 03 10 3F 3F 03: VGH and VGL ±20 V,
-  VSH +15 V and VSL -15 V, the SSD1683's levels. VCOM_DC 0x05 is -0.6 V.
+  VSH +15 V and VSL -15 V, the SSD1683's levels.
+- **VCOM belongs at -1.4 V, not Elecrow's -0.6 V.** VCOM_DC (0x82, -0.1 V a step from
+  -0.1 V) is where a frame driving 0 V leaves a pixel as it is. Over a grey frame, 173 frames
+  driving nothing lightened black and dark grey by 0.03 and 0.05 at -0.6 V and by 0.06 and
+  0.11 at -0.1 V (GxEPD2's); 519 such frames moved them by +0.02 and +0.01 at -0.9 V, 0.00 to
+  +0.01 at -1.1 and -1.3 V, and 0.00 and -0.01 at -1.5 V. Every waveform rests at 0 V for some
+  frames, and every pixel outside a partial window rests for a whole refresh, so off its null
+  VCOM drifts the greys and leaves a DC bias on waveforms that balance by frame count. At
+  -1.4 V they balance in fact. All the greys here were tuned there.
+- **SPI at 10 MHz.** The datasheet's write cycle is 100 ns at the least, so 10 MHz, though
+  its feature list says 20; the 5.79" board's SSD1683s take 20. Reads, 350 ns: the
+  temperature is read at 1 MHz.
 - **Supplies.** Power on (0x04) takes 80 ms with Elecrow's booster soft start
   (0x06 96 96 29) and 310 ms with the default; power off (0x02) 40 ms.
 - **Frame rate.** 0x30 sets it in 5 Hz steps, from 5 Hz at 0x00 to 200 Hz;
@@ -61,25 +72,30 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   length, the longest setting the refresh, and fills a shorter one's end with 0 V.
   So the driver checks that VCOM's table lasts as long as every pixel's, rather
   than that every table shares VCOM's timing as the 5.79" driver does.
-- **Seven greys.** The 5.79" driver's passes drew 0.50 to 0.97 here, bunched
-  towards white: this panel's dark table lands lighter. Retuned, dark grey (level
-  1) is 10 frames of black against 3 of white in each of five repeats, balanced
-  by 5 more of white up front; light grey (level 4) 7 of black against 4 of
-  white; and the half steps run at 130 Hz.
+- **Greys.** The grey waveforms keep Waveshare's 4.2" V2 VCOM, white and black tables
+  and retune its dark and light ones. Where a grey lands hangs on a table's last few frames:
+  9 frames of black against 3 of white in each of five repeats leaves dark grey at 0.22, and
+  one more frame of black at the very end 0.12. So the tables end on a short pair of their own,
+  which tunes them finer than a frame in each repeat: dark grey at a third, 1 black and 2
+  white; at a sixth, 1 and 1; light grey at two thirds, 7 of black against 4 of white in each
+  repeat then 1 more white. Four greys are even thirds, as ESPHome's anti-aliased fonts blend
+  (Waveshare's own sat at 0.26 and 0.75). Seven greys add half steps at 150 Hz: 3, 5 and 4
+  frames for levels 2, 3 and 5.
 
 ## Measured
 
 Times are whole updates, drawing included, with logging at DEBUG: VERBOSE logging over the
-115200 baud UART adds about 0.15 s to each. At 11 °C (the panel's sensor and the flat's own agreed), 50 Hz, against flat white and black
+115200 baud UART adds about 0.15 s to each. Greys are the first refresh after black and white
+frames; repeated, they stay within 0.04. At 11 to 12 °C (the panel's sensor and the flat's own agreed), 50 Hz, against flat white and black
 frames, each bar the panel's full height: where a bar sits moves its reading by up to 0.05,
 since the camera's response is not linear and the lamp lights the panel unevenly.
 
 | Refresh | Time | Result |
 |---|---|---|
-| Black and white (Elecrow's 20, 10, 20 frames) | 1.1 to 1.2 s | Clean black and white |
-| Four greys (the 5.79" driver's waveform) | 3.6 s | 0.00, 0.26, 0.75, 0.95 |
-| Seven greys, retuned for this panel | 4.2 s | 0.00, 0.17, 0.31, 0.50, 0.67, 0.80, 0.96 |
-| Fast partial, 12 frames one way | 0.40 s | 0.00 black, 0.96 white; greys elsewhere stay |
+| Black and white (Elecrow's 20, 10, 20 frames) | 1.15 to 1.3 s | Clean black and white |
+| Four greys | 3.7 s | 0.00, 0.33, 0.70, 0.95 |
+| Seven greys | 3.95 s | 0.00, 0.18, 0.34, 0.49, 0.69, 0.84, 1.00 |
+| Fast partial, 12 frames one way | 0.44 s | 0.00 black, 0.96 white; greys elsewhere stay |
 
 Also checked on the panel:
 

@@ -43,10 +43,10 @@ needs no `temperature_sensor`; `id(epd).panel_temperature()` returns it in °C. 
 
 | Mode | Time (50 Hz) | Behaviour |
 |---|---|---|
-| Full black and white | 1.1 to 1.2 s | Balanced, Elecrow's waveform |
-| Full four greys | about 3.6 s | Measured 0.00, 0.26, 0.75 and 0.95 |
-| Full seven greys | about 4.2 s | Measured 0.00, 0.17, 0.31, 0.50, 0.67, 0.80 and 0.96 |
-| Partial, subsequent | about 0.4 s | One-way push with per-pixel balance tracking |
+| Full black and white | 1.15 to 1.3 s | Balanced, Elecrow's waveform |
+| Full four greys | about 3.7 s | Even thirds: measured 0.00, 0.33, 0.70 and 0.95 |
+| Full seven greys | about 3.95 s | Measured 0.00, 0.18, 0.34, 0.49, 0.69, 0.84 and 1.00 |
+| Partial, subsequent | about 0.44 s | One-way push with per-pixel balance tracking |
 
 ```yaml
 display:
@@ -122,7 +122,7 @@ All pins default to the 5.79" board's fixed wiring.
 | `reset_pin` | `GPIO47` | Panel reset pin |
 | `busy_pin` | `GPIO48` | Panel BUSY input |
 | `power_pin` | `GPIO7` | Switches the panel's ground through Q9; must be high before anything answers |
-| `data_rate` | `20MHz` | SPI clock rate |
+| `data_rate` | `20MHz` | SPI clock rate (10 MHz on the 4.2", the UC8276C's limit) |
 | `lambda`, `pages` | none | Standard ESPHome drawing options; at most one may be set |
 
 ## Drawing

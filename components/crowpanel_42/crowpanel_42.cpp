@@ -30,8 +30,8 @@ static constexpr uint32_t UPDATE_DEADLINE_MS = 20000;
 static constexpr uint8_t FRAMES_50_HZ = 0x09;
 static constexpr float MAX_HZ = 200;
 // This panel's waveforms were tuned at 11 °C: the self-balanced ones at 50 Hz, the seven-grey
-// half steps at 130 Hz.
-static constexpr float TUNED_CELSIUS = 11, TUNED_HZ = 50, TUNED_HALF_HZ = 130;
+// half steps at 150 Hz.
+static constexpr float TUNED_CELSIUS = 11, TUNED_HZ = 50, TUNED_HALF_HZ = 150;
 
 // A waveform is five tables of six groups of seven bytes, in the SSD1683's order: VCOM, then one
 // for each pixel state, named by the pixel's NEW bit then its OLD bit, 1 white: WW, BW (white to
@@ -39,11 +39,24 @@ static constexpr float TUNED_CELSIUS = 11, TUNED_HZ = 50, TUNED_HALF_HZ = 130;
 // bits, frames in the rest: 0 V, VSH 0x40, VSL 0x80) and two state repeats. VSH (+15 V) drives a
 // pixel black and VSL (-15 V) white. Every waveform below spends as long at one as at the other,
 // so no refresh leaves a net drive on any pixel.
-static constexpr size_t TABLE = 42, WAVEFORM = 5 * TABLE;
+static constexpr size_t TABLE = 42, WAVEFORM = CrowPanel42::WAVEFORM;
+static_assert(WAVEFORM == 5 * TABLE);
 static constexpr uint8_t TABLE_WW = 1, TABLE_BW = 2, TABLE_WB = 3, TABLE_BB = 4;
 
+// How many frames table t of a waveform runs.
+static constexpr int frames(const uint8_t *waveform, int t) {
+  int total = 0;
+  for (int g = 0; g < 6; g++) {
+    const uint8_t *group = waveform + t * TABLE + g * 7;
+    const int ab = (group[1] & 0x3F) + (group[2] & 0x3F), cd = (group[3] & 0x3F) + (group[4] & 0x3F);
+    total += group[0] * (ab * group[5] + cd * group[6]);
+  }
+  return total;
+}
+
 // Waveshare's four-grey waveform for their 4.2in V2 panel, as the 5.79" driver runs it: group 1
-// once rather than five times.
+// once rather than five times. The grey waveforms here keep its VCOM, white and black tables and
+// retune its dark and light ones.
 static constexpr uint8_t GREY_LUT[WAVEFORM] = {
   // VCOM, then a table per pixel state; 6 groups each of RP, phases A to D, SR_AB, SR_CD
   0x01, 0x0A, 0x1B, 0x0F, 0x03, 0x01, 0x01,  // VCOM group 0
@@ -98,39 +111,53 @@ struct PartialWaveform {
 };
 static constexpr PartialWaveform PARTIAL{};
 
-// The seven-grey refresh's middle pass: the four-grey waveform with its dark and light tables
-// retuned for this panel, where Waveshare's draw them at 0.26 and 0.75 on the camera. Dark grey is
-// level 1 of the seven: 10 frames of black against 3 of white in each of group 2's five repeats,
-// balanced by 5 more of white in group 0, which makes it the longest table by 20 frames, so VCOM's
-// first phase grows to match. Light grey is level 4: 7 frames of black against 4 of white.
-struct EvenGreyWaveform {
+// A grey waveform: Waveshare's, with groups 0 to 3 of its dark (WB) and light (BW) tables given.
+// VCOM's first phase grows until its table runs exactly as long as the longest of the others: the
+// refresh lasts as long as that, and a frame of VCOM at its null beyond it would change nothing.
+struct GreyWaveform {
   uint8_t bytes[WAVEFORM];
-  constexpr EvenGreyWaveform() : bytes() {
+  constexpr GreyWaveform(const uint8_t (&dark)[4][4], const uint8_t (&light)[4][4]) : bytes() {
     for (size_t i = 0; i < WAVEFORM; i++)
       bytes[i] = GREY_LUT[i];
-    bytes[1] = 0x1E;  // VCOM group 0, phase A: 30 frames at its DC level
-    constexpr int BW = TABLE_BW * TABLE, WB = TABLE_WB * TABLE;  // the light and dark tables
-    constexpr uint8_t dark[4][4] = {
-        {0x94, 0x1B, 0x8F, 0x03}, {0x4A, 0x01, 0x8A, 0x01}, {0x4A, 0x83, 0x02, 0x04}, {0x04, 0x04, 0x02, 0x00}};
-    constexpr uint8_t light[4][4] = {
-        {0x0A, 0x1B, 0x8F, 0x03}, {0x4A, 0x01, 0x8A, 0x01}, {0x47, 0x83, 0x81, 0x04}, {0x04, 0x04, 0x02, 0x00}};
     for (int g = 0; g < 4; g++) {
       for (int p = 0; p < 4; p++) {
-        bytes[WB + g * 7 + 1 + p] = dark[g][p];
-        bytes[BW + g * 7 + 1 + p] = light[g][p];
+        bytes[TABLE_WB * TABLE + g * 7 + 1 + p] = dark[g][p];
+        bytes[TABLE_BW * TABLE + g * 7 + 1 + p] = light[g][p];
       }
     }
+    int longest = 0;
+    for (int t = 1; t < 5; t++)
+      longest = frames(this->bytes, t) > longest ? frames(this->bytes, t) : longest;
+    const int extra = longest - frames(this->bytes, 0);
+    if (extra > 0)
+      bytes[1] = static_cast<uint8_t>(bytes[1] + extra);
   }
 };
-static constexpr EvenGreyWaveform EVEN_GREY{};
+// Tuned on this panel with VCOM at its null, against flat white and black frames. Where a grey
+// lands hangs on the table's last few frames: 9 of black against 3 of white in each of group 2's
+// five repeats leaves dark grey at 0.22, one more of black at the very end 0.12. So the tables end
+// on a short pair of their own instead, which also tunes them finer than a frame in each repeat:
+// for dark grey at a third (0.34 as four greys), 1 frame of black and 2 of white; at a sixth (0.18
+// as seven), 1 and 1. Light grey, two thirds (0.71 as four, 0.66 as seven): 7 of black against 4 of
+// white in each repeat, then 1 more of white. Each is balanced by its white in group 0.
+static constexpr uint8_t DARK_THIRD[4][4] = {
+    {0x8F, 0x1B, 0x8E, 0x03}, {0x4A, 0x01, 0x8A, 0x01}, {0x49, 0x83, 0x02, 0x04}, {0x41, 0x82, 0x02, 0x00}};
+static constexpr uint8_t DARK_SIXTH[4][4] = {
+    {0x8F, 0x1B, 0x8F, 0x03}, {0x4A, 0x01, 0x8A, 0x01}, {0x49, 0x83, 0x02, 0x04}, {0x41, 0x81, 0x02, 0x00}};
+static constexpr uint8_t LIGHT[4][4] = {
+    {0x0A, 0x1B, 0x8E, 0x03}, {0x4A, 0x01, 0x8A, 0x01}, {0x47, 0x83, 0x81, 0x04}, {0x81, 0x04, 0x02, 0x00}};
+// Four greys in even steps, as anti-aliased text blends them.
+static constexpr GreyWaveform FOUR_GREY{DARK_THIRD, LIGHT};
+// The seven-grey refresh's middle pass: black, a sixth, two thirds and white.
+static constexpr GreyWaveform EVEN_GREY{DARK_SIXTH, LIGHT};
 
 // The seven-grey refresh's outer passes: a half step, towards black before the middle pass and
 // towards white after it, so the two cancel. The pixel's two RAM bits say which: level 2 (and
 // white, which a push and a pull leave white) from dark grey (WB), level 3 from dark grey (BW),
 // level 5 from light grey (WW), or for levels 0, 1 and 4, a one-frame trim (BB), towards white
-// before and towards black after. They run at 130 Hz, where at 50 Hz in the middle pass 2, 4 and 3
-// frames land levels 2, 3 and 5 at 0.33, 0.52 and 0.83 on the camera. In the warm, where that rate
-// would pass the controller's 200 Hz, about half the frames at half the rate.
+// before and towards black after. They run at 150 Hz, where after the middle pass at 50 Hz 3, 5 and 4
+// frames land levels 2, 3 and 5 at 0.34, 0.49 and 0.80 on the camera. They speed up with the middle
+// pass; past the controller's 200 Hz, they run at 200 Hz with their frames scaled to match.
 struct HalfStepWaveform {
   uint8_t bytes[WAVEFORM];
   constexpr HalfStepWaveform(bool white, uint8_t level_2, uint8_t level_3, uint8_t level_5) : bytes() {
@@ -153,8 +180,9 @@ struct HalfStepWaveform {
     bytes[TABLE_BB * TABLE + 4] = (white ? 0x40 : 0x80) | TRIM;  // BB: towards white before, black after
   }
 };
-static constexpr HalfStepWaveform HALF_TO_BLACK[2] = {{false, 2, 4, 3}, {false, 1, 2, 2}};
-static constexpr HalfStepWaveform HALF_TO_WHITE[2] = {{true, 2, 4, 3}, {true, 1, 2, 2}};
+static constexpr uint8_t HALF_LENGTHS[3] = {3, 5, 4};  // levels 2, 3 and 5
+static constexpr HalfStepWaveform HALF_TO_BLACK{false, HALF_LENGTHS[0], HALF_LENGTHS[1], HALF_LENGTHS[2]};
+static constexpr HalfStepWaveform HALF_TO_WHITE{true, HALF_LENGTHS[0], HALF_LENGTHS[1], HALF_LENGTHS[2]};
 
 // Waveforms of group 0 only, with phases A to C of the given lengths and, for each table, the level
 // in each phase (0 none, 1 VSH, black, 2 VSL, white).
@@ -209,16 +237,6 @@ static constexpr int net_drive(const uint8_t *waveform, int t) {
   }
   return net;
 }
-// How many frames table t of a waveform runs.
-static constexpr int frames(const uint8_t *waveform, int t) {
-  int total = 0;
-  for (int g = 0; g < 6; g++) {
-    const uint8_t *group = waveform + t * TABLE + g * 7;
-    const int ab = (group[1] & 0x3F) + (group[2] & 0x3F), cd = (group[3] & 0x3F) + (group[4] & 0x3F);
-    total += group[0] * (ab * group[5] + cd * group[6]);
-  }
-  return total;
-}
 // Whether VCOM's table runs at least as long as every pixel's. The controller runs each table on
 // its own timing, the longest setting the refresh, and fills a shorter one's end with 0 V; VCOM
 // should hold its DC level to the end. Each table's net drive counts the same whatever its timing.
@@ -241,17 +259,15 @@ static constexpr bool balanced(std::initializer_list<const uint8_t *> waveforms)
   }
   return true;
 }
-static_assert(vcom_lasts(PARTIAL.bytes) && vcom_lasts(GREY_LUT) && vcom_lasts(EVEN_GREY.bytes) &&
-                  vcom_lasts(BLACK_WHITE.bytes) && vcom_lasts(HALF_TO_BLACK[0].bytes) &&
-                  vcom_lasts(HALF_TO_BLACK[1].bytes) && vcom_lasts(HALF_TO_WHITE[0].bytes) &&
-                  vcom_lasts(HALF_TO_WHITE[1].bytes),
+static_assert(vcom_lasts(PARTIAL.bytes) && vcom_lasts(FOUR_GREY.bytes) && vcom_lasts(EVEN_GREY.bytes) &&
+                  vcom_lasts(BLACK_WHITE.bytes) && vcom_lasts(HALF_TO_BLACK.bytes) &&
+                  vcom_lasts(HALF_TO_WHITE.bytes),
               "VCOM's table must run as long as every pixel's");
 static_assert(balanced({PARTIAL.bytes}), "the partial waveform must leave no net drive on a pixel");
 static_assert(balanced({BLACK_WHITE.bytes}), "the black and white waveform must leave no net drive on a pixel");
-static_assert(balanced({GREY_LUT}), "the grey waveform must leave no net drive on a pixel");
+static_assert(balanced({FOUR_GREY.bytes}), "the grey waveform must leave no net drive on a pixel");
 static_assert(balanced({EVEN_GREY.bytes}), "the even grey waveform must leave no net drive on a pixel");
-static_assert(balanced({HALF_TO_BLACK[0].bytes, HALF_TO_WHITE[0].bytes}) &&
-                  balanced({HALF_TO_BLACK[1].bytes, HALF_TO_WHITE[1].bytes}),
+static_assert(balanced({HALF_TO_BLACK.bytes, HALF_TO_WHITE.bytes}),
               "the half steps must cancel");
 
 // A white pixel out of balance got there by a fast partial's push towards white (WB), a black one
@@ -437,14 +453,20 @@ bool CrowPanel42::initialise(bool partial) {
 
 // Waveforms from the registers in black and white mode, with the temperature sensed before every
 // power on; ±15 V for the pixels, as every waveform here assumes, and 20 V for the gates; Elecrow's
-// booster soft start, which brings the supplies up in 80 ms rather than 310; VCOM at Elecrow's
-// -0.6 V; and the border left floating, so no refresh drives it.
+// booster soft start, which brings the supplies up in 80 ms rather than 310; VCOM at -1.4 V; and
+// the border left floating, so no refresh drives it.
+//
+// VCOM is where a frame driving 0 V leaves a pixel as it is. Over a grey frame, 519 such frames moved
+// black and dark grey by +0.02 and +0.01 at -0.9 V, 0.00 to +0.01 at -1.1 and -1.3 V, and 0.00 and
+// -0.01 at -1.5 V; Elecrow's -0.6 V lightened them by 0.03 and 0.05 in only 173. Every waveform rests
+// at 0 V for some frames, and every pixel outside a partial window does for the whole refresh, so a
+// VCOM off its null both drifts the greys and leaves a DC bias on balanced waveforms.
 void CrowPanel42::send_init_() {
   this->cmd_data(0x00, {0x3F, 0x0D});
   this->cmd_data(0x01, {0x03, 0x10, 0x3F, 0x3F, 0x03});
   this->cmd_data(0x06, {0x96, 0x96, 0x29});
   this->cmd_data(0x61, {0x01, 0x90, 0x01, 0x2C});
-  this->cmd_data(0x82, {0x05});
+  this->cmd_data(0x82, {0x0D});
   this->cmd_data(0x50, {0xD7});
   this->cmd_data(0x60, {0x22});
   this->cmd_data(0xE3, {0x88});
@@ -564,10 +586,19 @@ void CrowPanel42::set_frame_rates_() {
   const float hz = std::isnan(celsius) ? TUNED_HZ
                                        : TUNED_HZ * refresh_seconds(TUNED_CELSIUS) / refresh_seconds(celsius);
   this->frame_rate_ = frame_rate_code(hz);
+  // The half steps keep their length against the middle pass's frames: at its rate, faster, or
+  // past 200 Hz at 200 Hz with fewer frames. Both are built from the same lengths, so they cancel.
   const float half_hz = TUNED_HALF_HZ * frame_rate_hz(this->frame_rate_) / TUNED_HZ;
-  this->half_short_ = half_hz > MAX_HZ;
-  this->half_rate_ = frame_rate_code(this->half_short_ ? half_hz / 2 : half_hz);
-  ESP_LOGV(TAG, "%.0f Hz for %.0f °C", frame_rate_hz(this->frame_rate_), celsius);
+  const float scale = half_hz > MAX_HZ ? MAX_HZ / half_hz : 1;
+  this->half_rate_ = frame_rate_code(half_hz * scale);
+  uint8_t lengths[3];
+  for (int i = 0; i < 3; i++)
+    lengths[i] = std::max<long>(1, std::lround(HALF_LENGTHS[i] * scale));
+  lengths[0] = std::min({lengths[0], lengths[1], lengths[2]});
+  memcpy(this->half_to_black_, HalfStepWaveform(false, lengths[0], lengths[1], lengths[2]).bytes, WAVEFORM);
+  memcpy(this->half_to_white_, HalfStepWaveform(true, lengths[0], lengths[1], lengths[2]).bytes, WAVEFORM);
+  ESP_LOGV(TAG, "%.0f Hz for %.0f °C; half steps %u, %u, %u at %.0f Hz", frame_rate_hz(this->frame_rate_), celsius,
+           lengths[0], lengths[1], lengths[2], frame_rate_hz(this->half_rate_));
 }
 
 // A second device on the bus for reading: the board wires the panel's data line to the bus's MOSI
@@ -715,16 +746,16 @@ void CrowPanel42::refresh_screen(bool partial) {
       this->load_waveform_(BLACK_WHITE.bytes, this->frame_rate_);
       break;
     case Pass::GREY:
-      this->load_waveform_(GREY_LUT, this->frame_rate_);
+      this->load_waveform_(FOUR_GREY.bytes, this->frame_rate_);
       break;
     case Pass::HALF_TO_BLACK:
-      this->load_waveform_(HALF_TO_BLACK[this->half_short_].bytes, this->half_rate_);
+      this->load_waveform_(this->half_to_black_, this->half_rate_);
       break;
     case Pass::EVEN_GREY:
       this->load_waveform_(EVEN_GREY.bytes, this->frame_rate_);
       break;
     case Pass::HALF_TO_WHITE:
-      this->load_waveform_(HALF_TO_WHITE[this->half_short_].bytes, this->half_rate_);
+      this->load_waveform_(this->half_to_white_, this->half_rate_);
       break;
   }
   this->command(0x12);

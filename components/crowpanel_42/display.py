@@ -49,8 +49,9 @@ def _seven_needs_grey(config):
 
 CONFIG_SCHEMA = cv.All(
     display.FULL_DISPLAY_SCHEMA.extend(
+        # The UC8276C's write cycle is 100 ns at the least: 10 MHz, not the SSD1683's 20.
         spi.spi_device_schema(
-            cs_pin_required=False, default_mode="MODE0", default_data_rate=20e6
+            cs_pin_required=False, default_mode="MODE0", default_data_rate=10e6
         )
     ).extend(
         {

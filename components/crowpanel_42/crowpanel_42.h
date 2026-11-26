@@ -53,6 +53,7 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   static constexpr uint16_t WIDTH = 400;
   static constexpr uint16_t HEIGHT = 300;
   static constexpr size_t PLANE_ROW = WIDTH / 8;  // a RAM plane's row: 8 pixels a byte
+  static constexpr size_t WAVEFORM = 5 * 42;      // a waveform: five tables of six seven-byte groups
 
   CrowPanel42() : EPaperBase("CrowPanel 4.2", WIDTH, HEIGHT, nullptr, 0, display::DISPLAY_TYPE_GRAYSCALE) {
     this->row_width_ = WIDTH / 2;  // the buffer's row: 2 pixels a byte
@@ -150,8 +151,9 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   bool ready_{false};           // the controller has been reset and initialised
   bool supplies_on_{false};     // the ±15 V supplies are on
   uint8_t frame_rate_{0x09};    // this update's, for its temperature
-  uint8_t half_rate_{0x18};     // the seven-grey half steps'
-  bool half_short_{false};      // the half steps run their shorter lengths, past 200 Hz
+  uint8_t half_rate_{0x1A};     // the seven-grey half steps', and the steps themselves
+  uint8_t half_to_black_[WAVEFORM]{};
+  uint8_t half_to_white_[WAVEFORM]{};
   bool read_temperature_{false};  // the supplies have just come on, so the sensor has a new reading
   float panel_celsius_{NAN};
   spi_device_handle_t reader_{nullptr};
