@@ -1,5 +1,7 @@
 #pragma once
 
+#include <driver/spi_master.h>
+
 #include "esphome/components/epaper_spi/epaper_spi.h"
 #include "esphome/core/defines.h"
 #ifdef USE_SENSOR
@@ -75,9 +77,11 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   // The reset pin, held high through deep sleep so the controller keeps its RAM.
   void set_hold_reset_pin(InternalGPIOPin *pin) { this->hold_reset_pin_ = pin; }
 #ifdef USE_SENSOR
-  // The panel's temperature, or near enough, for running the waveforms faster or slower.
+  // A temperature to use instead of the panel's own, for running the waveforms faster or slower.
   void set_temperature_sensor(sensor::Sensor *sensor) { this->temperature_ = sensor; }
 #endif
+  // The temperature the panel sensed when its supplies last came on, in °C; NAN before then.
+  float panel_temperature() const { return this->panel_celsius_; }
 
   // Where a RAM plane's bytes come from: the buffer through a table from a buffer byte (two pixels)
   // to their two bits, or a bit plane as it is.
@@ -117,6 +121,8 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   void load_waveform_(const uint8_t *waveform, uint8_t frame_rate);
   uint8_t frame_rate_for_temperature_() const;
   int band_() const;
+  void add_reader_();
+  void read_panel_temperature_();
   // Send the planes from plane_ on, OLD then NEW, in slices; true once both are out.
   bool send_planes_(const Source &old_source, const Source &new_source);
   bool find_changed_rows_();
@@ -144,6 +150,9 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   bool ready_{false};           // the controller has been reset and initialised
   bool supplies_on_{false};     // the ±15 V supplies are on
   uint8_t frame_rate_{0x09};    // this update's, for its temperature
+  bool read_temperature_{false};  // the supplies have just come on, so the sensor has a new reading
+  float panel_celsius_{NAN};
+  spi_device_handle_t reader_{nullptr};
 #ifdef USE_SENSOR
   sensor::Sensor *temperature_{nullptr};
 #endif

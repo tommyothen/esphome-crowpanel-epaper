@@ -6,6 +6,7 @@
 #include <initializer_list>
 
 #include <driver/gpio.h>
+#include <driver/spi_master.h>
 #include <esp_sleep.h>
 
 #include "esphome/core/hal.h"
@@ -26,8 +27,8 @@ static constexpr uint32_t MAX_ACTIVE_MS = 60000;
 static constexpr uint32_t UPDATE_DEADLINE_MS = 20000;
 
 // Frame rates (0x30): 5 Hz steps from 5 Hz at 0x00.
-static constexpr uint8_t FRAMES_35_HZ = 0x06, FRAMES_50_HZ = 0x09, FRAMES_75_HZ = 0x0E, FRAMES_100_HZ = 0x13,
-                         FRAMES_130_HZ = 0x18;
+static constexpr uint8_t FRAMES_50_HZ = 0x09, FRAMES_70_HZ = 0x0D, FRAMES_100_HZ = 0x13, FRAMES_130_HZ = 0x18,
+                         FRAMES_140_HZ = 0x19;
 
 // A waveform is five tables of six groups of seven bytes, in the SSD1683's order: VCOM, then one
 // for each pixel state, named by the pixel's NEW bit then its OLD bit, 1 white: WW, BW (white to
@@ -149,11 +150,11 @@ struct HalfStepWaveform {
     bytes[TABLE_BB * TABLE + 4] = (white ? 0x40 : 0x80) | TRIM;  // BB: towards white before, black after
   }
 };
-// For the temperature bands at 35, 50, 75 and 100 Hz.
+// For the temperature bands at 50, 70, 100 and 140 Hz: the tuned lengths scaled to each.
 static constexpr HalfStepWaveform HALF_TO_BLACK[4] = {
-    {false, 3, 5, 4}, {false, 2, 4, 3}, {false, 1, 3, 2}, {false, 1, 2, 2}};
+    {false, 2, 4, 3}, {false, 1, 3, 2}, {false, 1, 2, 2}, {false, 1, 1, 1}};
 static constexpr HalfStepWaveform HALF_TO_WHITE[4] = {
-    {true, 3, 5, 4}, {true, 2, 4, 3}, {true, 1, 3, 2}, {true, 1, 2, 2}};
+    {true, 2, 4, 3}, {true, 1, 3, 2}, {true, 1, 2, 2}, {true, 1, 1, 1}};
 
 // Waveforms of group 0 only, with phases A to C of the given lengths and, for each table, the level
 // in each phase (0 none, 1 VSH, black, 2 VSL, white).
@@ -321,6 +322,7 @@ void CrowPanel42::setup() {
   this->pixels_ = length == this->buffer_length_ ? pixels : nullptr;
   // What the glass shows and which pixels are out of balance, a bit a pixel each. Without them
   // there are no fast partials.
+  this->add_reader_();
   RAMAllocator<uint8_t> allocator;
   this->glass_ = allocator.allocate(2 * BIT_PLANE);
   if (this->glass_ != nullptr) {
@@ -527,35 +529,84 @@ bool CrowPanel42::find_changed_rows_() {
 
 // Particles move faster in the warm and slower in the cold, so the self-balanced waveforms run at
 // a frame rate for the temperature, which stretches or shrinks every frame alike and leaves their
-// balance as it is. The bands are the 5.79" panel's, whose maker's waveforms ran 4.5, 3.3, 2.3 and
-// 1.7 s across them. Without a temperature, 50 Hz.
+// balance as it is. This panel's waveforms were tuned at 11 °C, at 50 Hz. Its maker publishes no
+// curve and its OTP is blank, so the bands borrow the 5.79" panel's maker's, whose waveforms ran
+// 4.5, 3.3, 2.3 and 1.7 s below 12 °C, to 21, to 33 and above, scaled so the band holding 11 °C
+// runs at 50 Hz. The temperature is the one given, or else the panel's own; without either, 50 Hz.
 uint8_t CrowPanel42::frame_rate_for_temperature_() const {
+  float celsius = this->panel_celsius_;
 #ifdef USE_SENSOR
-  if (this->temperature_ != nullptr && !std::isnan(this->temperature_->state)) {
-    const float celsius = this->temperature_->state;
-    if (celsius < 12)
-      return FRAMES_35_HZ;
-    if (celsius >= 33)
-      return FRAMES_100_HZ;
-    if (celsius >= 21)
-      return FRAMES_75_HZ;
-  }
+  if (this->temperature_ != nullptr && !std::isnan(this->temperature_->state))
+    celsius = this->temperature_->state;
 #endif
-  return FRAMES_50_HZ;
+  if (std::isnan(celsius) || celsius < 12)
+    return FRAMES_50_HZ;
+  if (celsius < 21)
+    return FRAMES_70_HZ;
+  if (celsius < 33)
+    return FRAMES_100_HZ;
+  return FRAMES_140_HZ;
 }
 
 // The temperature band of this update's frame rate, coldest first.
 int CrowPanel42::band_() const {
   switch (this->frame_rate_) {
-    case FRAMES_35_HZ:
-      return 0;
-    case FRAMES_75_HZ:
-      return 2;
+    case FRAMES_70_HZ:
+      return 1;
     case FRAMES_100_HZ:
+      return 2;
+    case FRAMES_140_HZ:
       return 3;
     default:
-      return 1;
+      return 0;
   }
+}
+
+// A second device on the bus for reading: the board wires the panel's data line to the bus's MOSI
+// pin alone, so reads turn that pin around (3-wire, half duplex). Only on a hardware bus.
+void CrowPanel42::add_reader_() {
+  const auto host = this->parent_->get_interface();
+  if (host != SPI2_HOST && host != SPI3_HOST)
+    return;
+  spi_device_interface_config_t config = {};
+  config.mode = 0;
+  config.clock_speed_hz = 1000000;
+  config.spics_io_num = -1;
+  config.flags = SPI_DEVICE_3WIRE | SPI_DEVICE_HALFDUPLEX;
+  config.queue_size = 1;
+  if (spi_bus_add_device(host, &config, &this->reader_) != ESP_OK)
+    this->reader_ = nullptr;
+}
+
+// The temperature the controller sensed at its last power on (0x40), in whole degrees.
+void CrowPanel42::read_panel_temperature_() {
+  if (this->reader_ == nullptr || this->cs_ == nullptr)
+    return;
+  spi_transaction_t command = {};
+  command.flags = SPI_TRANS_USE_TXDATA;
+  command.length = 8;
+  command.tx_data[0] = 0x40;
+  spi_transaction_t reply = {};
+  reply.flags = SPI_TRANS_USE_RXDATA;
+  reply.rxlength = 16;
+  if (spi_device_acquire_bus(this->reader_, portMAX_DELAY) != ESP_OK)
+    return;
+  this->dc_pin_->digital_write(false);
+  this->cs_->digital_write(false);
+  esp_err_t err = spi_device_polling_transmit(this->reader_, &command);
+  this->dc_pin_->digital_write(true);
+  if (err == ESP_OK)
+    err = spi_device_polling_transmit(this->reader_, &reply);
+  this->cs_->digital_write(true);
+  spi_device_release_bus(this->reader_);
+  const int celsius = static_cast<int8_t>(reply.rx_data[0]);
+  // The sensor reads -25 to 49 °C; anything far outside is a misread.
+  if (err != ESP_OK || celsius < -30 || celsius > 60) {
+    ESP_LOGW(TAG, "Could not read the panel's temperature");
+    return;
+  }
+  this->panel_celsius_ = celsius;
+  ESP_LOGD(TAG, "Panel at %d °C", celsius);
 }
 
 // Decides what an update is, at its first transfer: a partial refresh when the count says so, fast
@@ -564,7 +615,6 @@ int CrowPanel42::band_() const {
 void CrowPanel42::plan_update_() {
   this->pass_count_ = 0;
   this->unchanged_ = false;
-  this->frame_rate_ = this->frame_rate_for_temperature_();
   if (this->update_count_ != 0) {
     if (!this->find_changed_rows_()) {
       this->unchanged_ = true;
@@ -624,6 +674,7 @@ void CrowPanel42::power_on() {
   if (this->unchanged_ || this->supplies_on_)
     return;
   this->switch_supplies_on_();
+  this->read_temperature_ = true;
 }
 
 void CrowPanel42::refresh_screen(bool partial) {
@@ -631,6 +682,14 @@ void CrowPanel42::refresh_screen(bool partial) {
     ESP_LOGV(TAG, "Nothing changed; no refresh");
     return;
   }
+  // The controller senses the temperature as the supplies come on, so the update's frame rate is
+  // settled here, once they are up.
+  if (this->read_temperature_) {
+    this->read_temperature_ = false;
+    this->read_panel_temperature_();
+  }
+  if (this->pass_index_ == 0)
+    this->frame_rate_ = this->frame_rate_for_temperature_();
   switch (this->passes_[this->pass_index_]) {
     // A fast partial's push may be cancelled hours later at another temperature, so the push, its
     // cancelling and its settling always run at 50 Hz: a frame's drive has to match exactly.

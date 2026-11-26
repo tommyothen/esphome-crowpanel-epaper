@@ -71,8 +71,8 @@ CONFIG_SCHEMA = cv.All(
             # 7 runs each grey refresh in three passes, with a half step between each of the
             # four greys. Needs grey.
             cv.Optional(CONF_GREY_LEVELS, default=4): cv.one_of(4, 7, int=True),
-            # The panel's temperature, or near enough: the waveforms run faster in the warm and
-            # slower in the cold. Without one they run as at 13 to 20 °C.
+            # A temperature to use instead of the panel's own, which the driver reads each time the
+            # supplies come on: the waveforms run faster in the warm and slower in the cold.
             cv.Optional(CONF_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
             # Something else decides when to draw (an interval, HA, the buttons).
             cv.Optional(CONF_UPDATE_INTERVAL, default="never"): cv.update_interval,

@@ -14,6 +14,12 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   0xFF throughout, and a refresh with the LUT from OTP runs for 3 ms and moves
   nothing. Every refresh runs a waveform the driver loads, as Elecrow's own code
   does.
+- **The panel's temperature.** The controller senses it as the supplies come on (TS_AUTO),
+  and the driver reads it then with 0x40, through a second device on the SPI bus in 3-wire
+  half-duplex mode: the board wires the panel's data line to the bus's MOSI pin alone. It read
+  11 °C, which the flat's own sensors agreed with to 0.4 °C. Tuned at 11 °C and 50 Hz, the
+  waveforms run at 50 Hz below 12 °C, 70 Hz to 21, 100 Hz to 33 and 140 Hz above: the 5.79"
+  panel's maker's ratios, which this panel's blank OTP cannot confirm.
 - **The data line reads back.** With GPIO11 switched to an input after a read
   command, the status flags read 0x13 idle and 0x15 with the supplies on, and
   0x40 returns the panel's own temperature in whole degrees (11 °C on the first
@@ -58,20 +64,18 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
 
 ## Measured
 
-At 11 °C on the panel's sensor, 50 Hz, against flat white and black frames:
+At 11 °C (the panel's sensor and the flat's own agreed), 50 Hz, against flat white and black
+frames, each bar the panel's full height: where a bar sits moves its reading by up to 0.05,
+since the camera's response is not linear and the lamp lights the panel unevenly.
 
 | Refresh | Time | Result |
 |---|---|---|
 | Black and white (Elecrow's 20, 10, 20 frames) | 1.3 to 1.4 s | Clean black and white |
 | Four greys (the 5.79" driver's waveform) | 3.8 s | 0.00, 0.26, 0.75, 0.95 |
-| Seven greys, retuned for this panel | 4.7 s | 0.00, 0.21, 0.41, 0.59, 0.75, 0.85, 0.97 |
+| Seven greys, retuned for this panel | 4.7 s | 0.00, 0.17, 0.31, 0.50, 0.67, 0.80, 0.96 |
 | Fast partial, 15 frames one way | 0.62 s | Solid black and white; greys elsewhere stay |
 
 ## Still open
 
-- Seven greys: the test harness drew 0.00, 0.17, 0.33, 0.52, 0.71, 0.83, 0.97 with these
-  waveforms, within 0.04 of even steps; through the driver, after other refreshes, they land
-  up to 0.09 light. Close that with one more round on the camera.
-- Read the panel's own temperature through a 3-wire read on the SPI bus, so no
-  `temperature_sensor` is needed.
+- Check the temperature bands in a warm room: they borrow the 5.79" panel's maker's curve.
 - Measure what the fast partial's 0.62 s is made of; the 5.79" manages 0.4 to 0.5 s.

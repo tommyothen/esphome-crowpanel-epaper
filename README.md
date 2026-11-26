@@ -8,7 +8,7 @@ HMI boards. Tested with ESPHome 2026.10.
 | Board | Resolution | Component | Status |
 |---|---|---|---|
 | CrowPanel 5.79" | 792x272 | `crowpanel_579` | Ready |
-| CrowPanel 4.2" V1.2 (UC8276C) | 400x300 | `crowpanel_42` | Ready; seven greys tuned to within 0.09 |
+| CrowPanel 4.2" V1.2 (UC8276C) | 400x300 | `crowpanel_42` | Ready |
 
 ## CrowPanel 5.79"
 
@@ -38,13 +38,14 @@ Panel wiring details, waveform notes and measurements are in
 back), whose UC8276C has no waveforms in its OTP: every refresh runs one the
 driver loads. It works as `crowpanel_579` does, with the same options and the
 same fast partials, cancelling and settling, and the pins default to the same
-wiring. V1.0 boards use an SSD1683 and are not supported yet.
+wiring. It reads the panel's own temperature each time the supplies come on, so it
+needs no `temperature_sensor`; `id(epd).panel_temperature()` returns it in °C. V1.0 boards use an SSD1683 and are not supported yet.
 
 | Mode | Time (50 Hz) | Behaviour |
 |---|---|---|
 | Full black and white | 1.3 to 1.4 s | Balanced, Elecrow's waveform |
 | Full four greys | about 3.8 s | Measured 0.00, 0.26, 0.75 and 0.95 |
-| Full seven greys | about 4.7 s | Measured 0.00, 0.21, 0.41, 0.59, 0.75, 0.85 and 0.97 |
+| Full seven greys | about 4.7 s | Measured 0.00, 0.17, 0.31, 0.50, 0.67, 0.80 and 0.96 |
 | Partial, subsequent | about 0.6 s | One-way push with per-pixel balance tracking |
 
 ```yaml
@@ -268,8 +269,8 @@ sides of the seam.
 - **Sleeping mid-update.** Entering deep sleep while `epaper_spi.is_updating`
   is true leaves any unsettled fast-partial pixels uncancelled and forces a
   full refresh on the next wake.
-- **CrowPanel 4.2".** The panel's own temperature sensor is not read yet, and V1.0
-  boards (SSD1683) are not supported.
+- **CrowPanel 4.2".** V1.0 boards (SSD1683) are not supported, and the temperature bands
+  are borrowed from the 5.79" panel's maker until checked in a warm room.
 
 ## Prior art
 
