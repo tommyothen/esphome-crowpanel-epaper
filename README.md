@@ -8,7 +8,7 @@ HMI boards. Tested with ESPHome 2026.10.
 | Board | Resolution | Component | Status |
 |---|---|---|---|
 | CrowPanel 5.79" | 792x272 | `crowpanel_579` | Ready |
-| CrowPanel 4.2" V1.2 (UC8276C) | 400x300 | `crowpanel_42` | Black and white, partials and four greys; seven greys not yet tuned |
+| CrowPanel 4.2" V1.2 (UC8276C) | 400x300 | `crowpanel_42` | Ready; seven greys tuned to within 0.09 |
 
 ## CrowPanel 5.79"
 
@@ -44,7 +44,7 @@ wiring. V1.0 boards use an SSD1683 and are not supported yet.
 |---|---|---|
 | Full black and white | 1.3 to 1.4 s | Balanced, Elecrow's waveform |
 | Full four greys | about 3.8 s | Measured 0.00, 0.26, 0.75 and 0.95 |
-| Full seven greys | about 4.4 s | Works, but the greys bunch towards white until tuned for this panel |
+| Full seven greys | about 4.7 s | Measured 0.00, 0.21, 0.41, 0.59, 0.75, 0.85 and 0.97 |
 | Partial, subsequent | about 0.6 s | One-way push with per-pixel balance tracking |
 
 ```yaml
@@ -268,8 +268,8 @@ sides of the seam.
 - **Sleeping mid-update.** Entering deep sleep while `epaper_spi.is_updating`
   is true leaves any unsettled fast-partial pixels uncancelled and forces a
   full refresh on the next wake.
-- **CrowPanel 4.2".** Seven greys are not yet tuned for its panel, the panel's own
-  temperature sensor is not read yet, and V1.0 boards (SSD1683) are not supported.
+- **CrowPanel 4.2".** The panel's own temperature sensor is not read yet, and V1.0
+  boards (SSD1683) are not supported.
 
 ## Prior art
 

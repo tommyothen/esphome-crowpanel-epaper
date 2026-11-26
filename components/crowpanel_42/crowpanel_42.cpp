@@ -27,7 +27,7 @@ static constexpr uint32_t UPDATE_DEADLINE_MS = 20000;
 
 // Frame rates (0x30): 5 Hz steps from 5 Hz at 0x00.
 static constexpr uint8_t FRAMES_35_HZ = 0x06, FRAMES_50_HZ = 0x09, FRAMES_75_HZ = 0x0E, FRAMES_100_HZ = 0x13,
-                         FRAMES_120_HZ = 0x17;
+                         FRAMES_130_HZ = 0x18;
 
 // A waveform is five tables of six groups of seven bytes, in the SSD1683's order: VCOM, then one
 // for each pixel state, named by the pixel's NEW bit then its OLD bit, 1 white: WW, BW (white to
@@ -95,17 +95,21 @@ struct PartialWaveform {
 static constexpr PartialWaveform PARTIAL{};
 
 // The seven-grey refresh's middle pass: the four-grey waveform with its dark and light tables
-// driven less, as the 5.79" driver tuned them.
+// retuned for this panel, where Waveshare's draw them at 0.26 and 0.75 on the camera. Dark grey is
+// level 1 of the seven: 10 frames of black against 3 of white in each of group 2's five repeats,
+// balanced by 5 more of white in group 0, which makes it the longest table by 20 frames, so VCOM's
+// first phase grows to match. Light grey is level 4: 7 frames of black against 4 of white.
 struct EvenGreyWaveform {
   uint8_t bytes[WAVEFORM];
   constexpr EvenGreyWaveform() : bytes() {
     for (size_t i = 0; i < WAVEFORM; i++)
       bytes[i] = GREY_LUT[i];
+    bytes[1] = 0x1E;  // VCOM group 0, phase A: 30 frames at its DC level
     constexpr int BW = TABLE_BW * TABLE, WB = TABLE_WB * TABLE;  // the light and dark tables
     constexpr uint8_t dark[4][4] = {
-        {0x0A, 0x1B, 0x8F, 0x03}, {0x4A, 0x81, 0x8A, 0x81}, {0x48, 0x83, 0x82, 0x04}, {0x04, 0x44, 0x82, 0x00}};
+        {0x94, 0x1B, 0x8F, 0x03}, {0x4A, 0x01, 0x8A, 0x01}, {0x4A, 0x83, 0x02, 0x04}, {0x04, 0x04, 0x02, 0x00}};
     constexpr uint8_t light[4][4] = {
-        {0x8A, 0x1B, 0x0F, 0x03}, {0x4A, 0x01, 0x8A, 0x01}, {0x48, 0x03, 0x82, 0x84}, {0x04, 0x04, 0x02, 0x00}};
+        {0x0A, 0x1B, 0x8F, 0x03}, {0x4A, 0x01, 0x8A, 0x01}, {0x47, 0x83, 0x81, 0x04}, {0x04, 0x04, 0x02, 0x00}};
     for (int g = 0; g < 4; g++) {
       for (int p = 0; p < 4; p++) {
         bytes[WB + g * 7 + 1 + p] = dark[g][p];
@@ -120,7 +124,9 @@ static constexpr EvenGreyWaveform EVEN_GREY{};
 // towards white after it, so the two cancel. The pixel's two RAM bits say which: level 2 (and
 // white, which a push and a pull leave white) from dark grey (WB), level 3 from dark grey (BW),
 // level 5 from light grey (WW), or for levels 0, 1 and 4, a one-frame trim (BB), towards white
-// before and towards black after. One set of lengths for each temperature band.
+// before and towards black after. They run at 130 Hz, where at 50 Hz in the middle pass 2, 4 and 3
+// frames land levels 2, 3 and 5 at 0.33, 0.52 and 0.83 on the camera. One set of lengths for each
+// temperature band.
 struct HalfStepWaveform {
   uint8_t bytes[WAVEFORM];
   constexpr HalfStepWaveform(bool white, uint8_t level_2, uint8_t level_3, uint8_t level_5) : bytes() {
@@ -201,18 +207,23 @@ static constexpr int net_drive(const uint8_t *waveform, int t) {
   }
   return net;
 }
-// Whether every table of a waveform runs to the same timing as VCOM's. The controller runs the
-// longest table and pads the others with 0 V, so a table timed differently would still be counted
-// right, but every waveform here keeps them equal, which keeps the reasoning simple.
-static constexpr bool same_timing(const uint8_t *waveform) {
+// How many frames table t of a waveform runs.
+static constexpr int frames(const uint8_t *waveform, int t) {
+  int total = 0;
+  for (int g = 0; g < 6; g++) {
+    const uint8_t *group = waveform + t * TABLE + g * 7;
+    const int ab = (group[1] & 0x3F) + (group[2] & 0x3F), cd = (group[3] & 0x3F) + (group[4] & 0x3F);
+    total += group[0] * (ab * group[5] + cd * group[6]);
+  }
+  return total;
+}
+// Whether VCOM's table runs at least as long as every pixel's. The controller runs each table on
+// its own timing, the longest setting the refresh, and fills a shorter one's end with 0 V; VCOM
+// should hold its DC level to the end. Each table's net drive counts the same whatever its timing.
+static constexpr bool vcom_lasts(const uint8_t *waveform) {
   for (int t = 1; t < 5; t++) {
-    for (int g = 0; g < 6; g++) {
-      for (int i = 0; i < 7; i++) {
-        const uint8_t mask = (i >= 1 && i <= 4) ? 0x3F : 0xFF;
-        if ((waveform[t * TABLE + g * 7 + i] & mask) != (waveform[g * 7 + i] & mask))
-          return false;
-      }
-    }
+    if (frames(waveform, t) > frames(waveform, 0))
+      return false;
   }
   return true;
 }
@@ -228,13 +239,13 @@ static constexpr bool balanced(std::initializer_list<const uint8_t *> waveforms)
   }
   return true;
 }
-static_assert(same_timing(PARTIAL.bytes) && same_timing(GREY_LUT) && same_timing(EVEN_GREY.bytes) &&
-                  same_timing(BLACK_WHITE.bytes) && same_timing(HALF_TO_BLACK[0].bytes) &&
-                  same_timing(HALF_TO_BLACK[1].bytes) && same_timing(HALF_TO_BLACK[2].bytes) &&
-                  same_timing(HALF_TO_BLACK[3].bytes) && same_timing(HALF_TO_WHITE[0].bytes) &&
-                  same_timing(HALF_TO_WHITE[1].bytes) && same_timing(HALF_TO_WHITE[2].bytes) &&
-                  same_timing(HALF_TO_WHITE[3].bytes),
-              "every table of a waveform must run to VCOM's timing");
+static_assert(vcom_lasts(PARTIAL.bytes) && vcom_lasts(GREY_LUT) && vcom_lasts(EVEN_GREY.bytes) &&
+                  vcom_lasts(BLACK_WHITE.bytes) && vcom_lasts(HALF_TO_BLACK[0].bytes) &&
+                  vcom_lasts(HALF_TO_BLACK[1].bytes) && vcom_lasts(HALF_TO_BLACK[2].bytes) &&
+                  vcom_lasts(HALF_TO_BLACK[3].bytes) && vcom_lasts(HALF_TO_WHITE[0].bytes) &&
+                  vcom_lasts(HALF_TO_WHITE[1].bytes) && vcom_lasts(HALF_TO_WHITE[2].bytes) &&
+                  vcom_lasts(HALF_TO_WHITE[3].bytes),
+              "VCOM's table must run as long as every pixel's");
 static_assert(balanced({PARTIAL.bytes}), "the partial waveform must leave no net drive on a pixel");
 static_assert(balanced({BLACK_WHITE.bytes}), "the black and white waveform must leave no net drive on a pixel");
 static_assert(balanced({GREY_LUT}), "the grey waveform must leave no net drive on a pixel");
@@ -258,8 +269,8 @@ static_assert(net_drive(ONE_WAY.bytes, TABLE_BW) == FAST_FRAMES && net_drive(ONE
               "a fast partial pushes only the pixels that change, one push each");
 static_assert(cancels(CORRECTION.bytes), "cancelling must undo a fast partial's push exactly");
 static_assert(cancels(SETTLE.bytes), "settling must undo a fast partial's push exactly");
-static_assert(same_timing(ONE_WAY.bytes) && same_timing(CORRECTION.bytes) && same_timing(SETTLE.bytes),
-              "every table of a waveform must run to VCOM's timing");
+static_assert(vcom_lasts(ONE_WAY.bytes) && vcom_lasts(CORRECTION.bytes) && vcom_lasts(SETTLE.bytes),
+              "VCOM's table must run as long as every pixel's");
 
 // For each plane bit a refresh needs, the levels (0 to 6) that set it, and from that a table from
 // a buffer byte, two pixels with the first in the high nibble, to their two bits.
@@ -640,13 +651,13 @@ void CrowPanel42::refresh_screen(bool partial) {
       this->load_waveform_(GREY_LUT, this->frame_rate_);
       break;
     case Pass::HALF_TO_BLACK:
-      this->load_waveform_(HALF_TO_BLACK[this->band_()].bytes, FRAMES_120_HZ);
+      this->load_waveform_(HALF_TO_BLACK[this->band_()].bytes, FRAMES_130_HZ);
       break;
     case Pass::EVEN_GREY:
       this->load_waveform_(EVEN_GREY.bytes, this->frame_rate_);
       break;
     case Pass::HALF_TO_WHITE:
-      this->load_waveform_(HALF_TO_WHITE[this->band_()].bytes, FRAMES_120_HZ);
+      this->load_waveform_(HALF_TO_WHITE[this->band_()].bytes, FRAMES_130_HZ);
       break;
   }
   this->command(0x12);

@@ -46,6 +46,15 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   board turned so Elecrow's factory menu reads normally, the origin is top left and
   nothing is mirrored.
 - **Border** left floating (CDI 0xD7), as Elecrow leaves it, so no refresh drives it.
+- **Tables run on their own timing.** The controller runs each table to its own
+  length, the longest setting the refresh, and fills a shorter one's end with 0 V.
+  So the driver checks that VCOM's table lasts as long as every pixel's, rather
+  than that every table shares VCOM's timing as the 5.79" driver does.
+- **Seven greys.** The 5.79" driver's passes drew 0.50 to 0.97 here, bunched
+  towards white: this panel's dark table lands lighter. Retuned, dark grey (level
+  1) is 10 frames of black against 3 of white in each of five repeats, balanced
+  by 5 more of white up front; light grey (level 4) 7 of black against 4 of
+  white; and the half steps run at 130 Hz.
 
 ## Measured
 
@@ -55,12 +64,14 @@ At 11 °C on the panel's sensor, 50 Hz, against flat white and black frames:
 |---|---|---|
 | Black and white (Elecrow's 20, 10, 20 frames) | 1.3 to 1.4 s | Clean black and white |
 | Four greys (the 5.79" driver's waveform) | 3.8 s | 0.00, 0.26, 0.75, 0.95 |
-| Seven greys (the 5.79" driver's passes) | 4.4 s | 0.00, 0.50, 0.72, 0.82, 0.84, 0.91, 0.97: not tuned for this panel |
+| Seven greys, retuned for this panel | 4.7 s | 0.00, 0.21, 0.41, 0.59, 0.75, 0.85, 0.97 |
 | Fast partial, 15 frames one way | 0.62 s | Solid black and white; greys elsewhere stay |
 
 ## Still open
 
-- Tune the seven-grey passes on this panel; they need the camera.
+- Seven greys: the test harness drew 0.00, 0.17, 0.33, 0.52, 0.71, 0.83, 0.97 with these
+  waveforms, within 0.04 of even steps; through the driver, after other refreshes, they land
+  up to 0.09 light. Close that with one more round on the camera.
 - Read the panel's own temperature through a 3-wire read on the SPI bus, so no
   `temperature_sensor` is needed.
 - Measure what the fast partial's 0.62 s is made of; the 5.79" manages 0.4 to 0.5 s.
