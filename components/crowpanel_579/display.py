@@ -34,6 +34,7 @@ DEPENDENCIES = ["spi"]
 
 CONF_GREY = "grey"
 CONF_GREY_LEVELS = "grey_levels"
+CONF_GREY_PARTIALS = "grey_partials"
 CONF_POWER_PIN = "power_pin"
 CONF_TEMPERATURE_SENSOR = "temperature_sensor"
 
@@ -44,6 +45,8 @@ CrowPanel579 = crowpanel_579_ns.class_("CrowPanel579", CrowPanelBase)
 def _seven_needs_grey(config):
     if config[CONF_GREY_LEVELS] == 7 and not config[CONF_GREY]:
         raise cv.Invalid("grey_levels: 7 needs grey: true")
+    if config[CONF_GREY_PARTIALS] and not config[CONF_GREY]:
+        raise cv.Invalid("grey_partials needs grey: true")
     return config
 
 
@@ -69,6 +72,13 @@ CONFIG_SCHEMA = cv.All(
             # 7 runs each grey refresh in three passes, with a half step between each of the
             # four greys (about 4.4 s). Needs grey.
             cv.Optional(CONF_GREY_LEVELS, default=4): cv.one_of(4, 7, int=True),
+            # "glide" walks each changed pixel to its new grey on a partial update, without
+            # flashing, rather than pushing it to black or white; the next full refresh settles the
+            # greys exactly. "live" makes each update a short tick towards the frame drawn, ticking
+            # on until everything arrives, for things that move. Needs grey, and PSRAM.
+            cv.Optional(CONF_GREY_PARTIALS, default=False): cv.Any(
+                cv.boolean, cv.one_of("glide", "live", lower=True)
+            ),
             # The panel's temperature, or near enough: the waveforms run faster in the warm and
             # slower in the cold, in the panel maker's bands. Without one they run as at 13 to 20 °C.
             cv.Optional(CONF_TEMPERATURE_SENSOR): cv.use_id(sensor.Sensor),
@@ -101,6 +111,12 @@ async def to_code(config):
     cg.add(var.set_full_update_every(config[CONF_FULL_UPDATE_EVERY]))
     cg.add(var.set_grey(config[CONF_GREY]))
     cg.add(var.set_grey_levels(config[CONF_GREY_LEVELS]))
+    if config[CONF_GREY_PARTIALS] == "glide":
+        cg.add(var.set_glide(True))
+    elif config[CONF_GREY_PARTIALS] == "live":
+        cg.add(var.set_live(True))
+    elif config[CONF_GREY_PARTIALS] is True:
+        raise cv.Invalid("the 5.79\" has no partial window: grey_partials takes glide or live")
     if temperature := config.get(CONF_TEMPERATURE_SENSOR):
         cg.add(var.set_temperature_sensor(await cg.get_variable(temperature)))
 

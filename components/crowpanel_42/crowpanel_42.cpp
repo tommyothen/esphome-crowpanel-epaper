@@ -270,19 +270,28 @@ static constexpr SimpleWaveform SETTLE{
 // as the difference, the ends 48, past where both curves flatten; then tuned on the camera against
 // an exact refresh of the same picture. Frames at 200 Hz, from level (row) to level (column), +
 // black and - white.
-static constexpr int8_t GLIDE[7][7] = {
-    {0, -5, -11, -17, -20, -25, -48},
-    {23, 0, -3, -6, -10, -17, -40},
-    {33, 13, 0, -2, -5, -12, -36},
-    {37, 17, 8, 0, -3, -9, -32},
-    {40, 21, 13, 7, 0, -5, -28},
-    {43, 23, 15, 10, 5, 0, -22},
-    {48, 24, 16, 12, 8, 5, 0},
+//
+// Ticks are 4-frame refreshes one after another, which drive harder than the same frames given as
+// binary digits: at 12 °C, from a settled white, they left 0.89, 0.70, 0.52, 0.40, 0.31, 0.25, 0.18,
+// 0.14 and 0.11 after 4, 8, 12, 16, 20, 24, 32, 40 and 48 frames; from a settled black, 0.11, 0.26,
+// 0.46, 0.64, 0.75, 0.82, 0.90, 0.93 and 0.96. (Refreshes of 2 frames reached 0.18 and 0.95, of 8
+// frames 0.03 and 1.03.) Past 48 frames the curves are extrapolated.
+static constexpr CrowPanel42::GlideTuning GLIDES{
+    {
+        {0, -5, -11, -17, -20, -25, -48},
+        {23, 0, -3, -6, -10, -17, -40},
+        {33, 13, 0, -2, -5, -12, -36},
+        {37, 17, 8, 0, -3, -9, -32},
+        {40, 21, 13, 7, 0, -5, -28},
+        {43, 23, 15, 10, 5, 0, -22},
+        {48, 24, 16, 12, 8, 5, 0},
+    },
+    {{0, .99f}, {4, .89f}, {8, .70f}, {12, .52f}, {16, .40f}, {20, .31f}, {24, .25f}, {32, .18f}, {40, .14f},
+     {48, .11f}, {64, .08f}},
+    {{0, .03f}, {4, .11f}, {8, .26f}, {12, .46f}, {16, .64f}, {20, .75f}, {24, .82f}, {32, .90f}, {40, .93f},
+     {48, .96f}, {64, .98f}},
 };
 static constexpr uint8_t FRAMES_200_HZ = 0x1F;
-// A glide's drive record holds up to this many frames either way; a glide that would take a pixel
-// further settles its window in greys instead.
-static constexpr int MAX_DRIVE = 127;
 
 // One of a glide's scans, or a scan cancelling glides: with OLD and NEW as masks, black on BW and
 // white on WB for `frames` frames (two phases past the 63 a phase holds), WW and BB holding.
@@ -373,29 +382,9 @@ static RTC_DATA_ATTR bool shown_rows_valid;
 // deep sleep for the next grey partial.
 static RTC_DATA_ATTR CrowPanel42::Window slept_dirty;
 
-// A window is empty when its first row is past its last.
-static constexpr CrowPanel42::Window EMPTY{CrowPanel42::PLANE_ROW, 0, CrowPanel42::HEIGHT, 0};
-static bool is_empty(const CrowPanel42::Window &window) { return window.first_row > window.last_row; }
-static void merge(CrowPanel42::Window &into, const CrowPanel42::Window &window) {
-  if (is_empty(window))
-    return;
-  if (is_empty(into)) {
-    into = window;
-    return;
-  }
-  into.first_bank = std::min(into.first_bank, window.first_bank);
-  into.last_bank = std::max(into.last_bank, window.last_bank);
-  into.first_row = std::min(into.first_row, window.first_row);
-  into.last_row = std::max(into.last_row, window.last_row);
-}
-
-// The reader for the panel's temperature, and with grey, the copy of the last frame drawn in greys.
+// The reader for the panel's temperature.
 void CrowPanel42::setup_controllers_() {
   this->add_reader_();
-  if (this->grey_ && this->pixels_ != nullptr) {
-    RAMAllocator<uint8_t> allocator;
-    this->shown_ = allocator.allocate(this->buffer_length_);
-  }
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) {
     shown_rows_valid = false;
   } else {
@@ -406,23 +395,8 @@ void CrowPanel42::setup_controllers_() {
 // Before a deep sleep the supplies go off, after any refresh still running; the controller stays
 // in standby, keeping its RAM. An update cut short leaves the row record untrusted.
 void CrowPanel42::prepare_for_sleep_(bool settled) {
-  // Glides' drive lives in PSRAM, which the sleep loses, so it is cancelled now, by a grey refresh
-  // of everything glides have touched.
-  if (settled && this->driven_count_ != 0) {
-    ESP_LOGD(TAG, "Settling %u glided pixels before sleeping", (unsigned) this->driven_count_);
-    this->request_grey_partial();
-    this->update();
-    const uint32_t start = millis();
-    while ((this->state_ != epaper_spi::EPaperState::IDLE || this->copying_) && millis() - start < 20000) {
-      this->loop();
-      App.feed_wdt();
-      delay(1);
-    }
-  }
   shown_rows_valid = shown_rows_valid && settled;
   slept_dirty = this->dirty_;
-  if (this->ready_)
-    this->copy_stale_reading_();
   if (this->supplies_on_) {
     this->wait_idle_(3000);
     this->switch_supplies_off_();
@@ -435,24 +409,10 @@ void CrowPanel42::prepare_for_sleep_(bool settled) {
 // whose levels changed; and around whatever black and white refreshes have touched since, which is
 // all of it when the last full refresh was one.
 bool CrowPanel42::plan_own_update_() {
-  // A full refresh cancels every glide's drive first, and the base plans the rest.
-  if (this->update_count_ == 0) {
-    this->copy_stale_reading_();
-    if (this->driven_count_ != 0) {
-      this->window_ = {0, static_cast<uint8_t>(PLANE_ROW - 1), 0, static_cast<uint16_t>(HEIGHT - 1)};
-      this->plan_scans_(Pass::UNDOSE, this->drive_bits_());
-    }
-    return false;
-  }
-  if (this->plan_tick_())
-    return true;
-  this->copy_stale_reading_();
-  if (this->plan_glide_())
-    return true;
   const bool grey_partial = this->grey_ && this->pixels_ != nullptr &&
-                            (this->grey_partials_ || this->glide_ || this->grey_requested_) &&
+                            (this->grey_partials_ || this->glide_ || this->live_ || this->settle_requested_) &&
                             (this->shown_valid_ || shown_rows_valid || !is_empty(this->dirty_));
-  this->grey_requested_ = false;
+  this->settle_requested_ = false;
   if (!grey_partial)
     return false;
   const bool changed =
@@ -484,11 +444,11 @@ void CrowPanel42::start_pass_(Pass pass) {
   this->plane_ = partial ? 1 : 0;
   if (!partial)
     shown_rows_valid = false;
-  // A scan sends only its window, in partial mode, where writes fill the window.
+  // A scan sends only its window, in partial mode, where writes fill the window, and leaves its
+  // masks there.
   if (pass == Pass::DOSE || pass == Pass::UNDOSE) {
-    if (!this->ticking_)
-      this->build_masks_(pass, this->scan_frames_[this->pass_index_]);
     this->send_window_();
+    merge(this->stale_, this->window_);
   }
 }
 
@@ -504,38 +464,19 @@ void CrowPanel42::pass_finished_() {
 // covers: a fast partial by the bytes whose reading changed, a balanced one, from cold or after a
 // wake without the glass's reading, by the rows it sent, and a full refresh by the whole panel.
 void CrowPanel42::update_finished_(Pass last) {
-  this->record_drive_(last);
-  if (last == Pass::DOSE && this->glass_ != nullptr) {
-    merge(this->stale_, this->window_);
-  } else {
-    this->stale_ = EMPTY;  // the base writes the reading to both planes
-  }
-  if (!this->ticking_)
-    this->estimate_valid_ = false;
-  if (last == Pass::DOSE) {
-    // The glide drew the frame near enough: the next glide starts from it, and the next grey
-    // partial settles its window. Outside the window nothing changed.
-    const size_t row = this->row_width_, first = this->window_.first_row, rows = this->window_.last_row + 1 - first;
-    memcpy(this->shown_ + first * row, this->pixels_ + first * row, rows * row);
-    for (size_t y = first; y != first + rows; y++)
-      shown_rows[y] = this->level_row_hash_(y);
-    shown_rows_valid = true;
-    merge(this->dirty_, this->window_);
-  } else if (last == Pass::GREY || last == Pass::HALF_TO_WHITE) {
-    this->dirty_ = EMPTY;
-    if (this->shown_ != nullptr) {
-      memcpy(this->shown_, this->pixels_, this->buffer_length_);
-      this->shown_valid_ = true;
-    }
-    for (size_t y = 0; y != HEIGHT; y++)
-      shown_rows[y] = this->level_row_hash_(y);
-    shown_rows_valid = true;
-  } else if (last == Pass::BLACK_WHITE) {
-    this->dirty_ = {0, static_cast<uint8_t>(PLANE_ROW - 1), 0, static_cast<uint16_t>(HEIGHT - 1)};
+  if (last == Pass::BLACK_WHITE) {
+    this->dirty_ = this->whole_window_();
   } else if (last == Pass::PARTIAL) {
     merge(this->dirty_, {0, static_cast<uint8_t>(PLANE_ROW - 1), this->first_row_,
                          static_cast<uint16_t>(this->end_row_ - 1)});
   }
+}
+
+// After a wake, a grey partial finds the rows that changed from these hashes.
+void CrowPanel42::rows_drawn_(uint16_t first, uint16_t last) {
+  for (size_t y = first; y <= last; y++)
+    shown_rows[y] = this->level_row_hash_(y);
+  shown_rows_valid = true;
 }
 
 void CrowPanel42::reading_changed_(size_t y, size_t i) {
@@ -545,7 +486,7 @@ void CrowPanel42::reading_changed_(size_t y, size_t i) {
 void CrowPanel42::forget_() {
   this->shown_valid_ = false;
   this->windowed_ = false;
-  this->dirty_ = EMPTY;
+  this->dirty_ = EMPTY_WINDOW;
   shown_rows_valid = false;
 }
 
@@ -748,35 +689,9 @@ void CrowPanel42::read_panel_temperature_() {
 }
 
 
-// The smallest window holding every pixel whose level differs from the last frame drawn: whole
-// rows down, and across in the controller's 8-pixel banks. False when no pixel differs.
-bool CrowPanel42::find_changed_window_() {
-  int first_row = -1, last_row = -1, first_bank = PLANE_ROW, last_bank = -1;
-  const size_t width = this->row_width_;
-  for (size_t y = 0; y != HEIGHT; y++) {
-    const uint8_t *now = this->pixels_ + y * width, *was = this->shown_ + y * width;
-    if (memcmp(now, was, width) == 0)
-      continue;
-    if (first_row < 0)
-      first_row = y;
-    last_row = y;
-    size_t first = 0, last = width - 1;
-    while (now[first] == was[first])
-      first++;
-    while (now[last] == was[last])
-      last--;
-    first_bank = std::min<int>(first_bank, first / 4);  // four buffer bytes to a bank
-    last_bank = std::max<int>(last_bank, last / 4);
-  }
-  if (first_row < 0)
-    return false;
-  this->window_ = {static_cast<uint8_t>(first_bank), static_cast<uint8_t>(last_bank), static_cast<uint16_t>(first_row),
-                   static_cast<uint16_t>(last_row)};
-  return true;
-}
 
 // FNV-1a over row y's levels.
-uint32_t CrowPanel42::level_row_hash_(size_t y) const {
+uint32_t CROWPANEL_FAST CrowPanel42::level_row_hash_(size_t y) const {
   const uint8_t *row = this->pixels_ + y * this->row_width_;
   uint32_t hash = 2166136261u;
   for (size_t i = 0; i != this->row_width_; i++)
@@ -885,6 +800,7 @@ void CrowPanel42::refresh_screen(bool partial) {
       this->load_waveform_(scan_waveform(this->scan_frames_[this->pass_index_]).bytes, FRAMES_200_HZ);
       this->command(0x12);
       this->next_delay_ = 2;
+      this->prerender_();
       return;
   }
   // A partial window (0x91, 0x90) confines the refresh: pixels outside it rest at 0 V, which at
@@ -924,6 +840,8 @@ void CrowPanel42::load_waveform_(const uint8_t *waveform, uint8_t frame_rate) {
 // ACTIVE_MS passes without another update, so the next one skips switching them on, but no longer
 // than MAX_ACTIVE_MS at a stretch. The controller itself stays in standby, keeping its RAM.
 void CrowPanel42::deep_sleep() {
+  if (this->continue_live_())
+    return;  // ticking on, the supplies with it
   if (this->supplies_on_ && millis() - this->supplies_since_ >= MAX_ACTIVE_MS) {
     this->switch_supplies_off_();
     return;
@@ -1000,129 +918,11 @@ void CrowPanel42::switch_supplies_off_() {
   this->supplies_on_ = false;
 }
 
-// A pixel's level in a buffer of 4 bits a pixel, the first of each pair in the high nibble.
-static uint8_t level_at(const uint8_t *buffer, size_t x, size_t y) {
-  const uint8_t pair = buffer[y * (CrowPanel42::WIDTH / 2) + x / 2];
-  return (x & 1) ? pair & 0x0F : pair >> 4;
-}
 
-// This update's glide from each level to each other, in frames at 200 Hz: the curves' frames,
-// fewer in the warm and more in the cold, as the other waveforms' frame rates go.
-void CrowPanel42::set_doses_() {
-  float celsius = this->panel_celsius_;
-#ifdef USE_SENSOR
-  if (this->temperature_ != nullptr && !std::isnan(this->temperature_->state))
-    celsius = this->temperature_->state;
-#endif
-  const float speed = std::isnan(celsius) ? 1 : refresh_seconds(TUNED_CELSIUS) / refresh_seconds(celsius);
-  for (int from = 0; from < 7; from++) {
-    for (int to = 0; to < 7; to++)
-      this->doses_[from][to] = static_cast<int8_t>(std::clamp<long>(std::lround(GLIDE[from][to] / speed), -63, 63));
-  }
-}
 
-// A glide, when the driver knows every pixel's level and nobody asked for exact greys: a scan for
-// each binary digit the doses in the window around what changed need. Not when a pixel's drive
-// would pass what its record holds; the grey partial settles the window instead.
-bool CrowPanel42::plan_glide_() {
-  if (!this->glide_ || this->grey_requested_ || !this->shown_valid_)
-    return false;
-  if (this->drive_ == nullptr) {
-    RAMAllocator<uint8_t> allocator;
-    this->drive_ = reinterpret_cast<int8_t *>(allocator.allocate(WIDTH * HEIGHT));
-    if (this->drive_ == nullptr)
-      return false;
-    memset(this->drive_, 0, WIDTH * HEIGHT);
-  }
-  if (this->push_ == nullptr) {
-    RAMAllocator<uint8_t> allocator;
-    this->push_ = reinterpret_cast<int8_t *>(allocator.allocate(WIDTH * HEIGHT));
-    this->masks_ = allocator.allocate(2 * BIT_PLANE);
-  }
-  if (this->push_ == nullptr || this->masks_ == nullptr)
-    return false;
-  if (!this->find_changed_window_()) {
-    this->unchanged_ = true;
-    return true;
-  }
-  this->set_doses_();
-  uint8_t bits = 0;
-  for (size_t y = this->window_.first_row; y <= this->window_.last_row; y++) {
-    for (size_t x = this->window_.first_bank * 8; x != (this->window_.last_bank + 1) * 8u; x++) {
-      const uint8_t to = level_at(this->pixels_, x, y);
-      const int drive = this->drive_[y * WIDTH + x];
-      int dose = this->doses_[level_at(this->shown_, x, y)][to];
-      // Going to black or white, pushing further changes nothing to see, so a glide there pays back
-      // drive the other way.
-      if (to == 0 && dose > 0)
-        dose = std::min(63, std::max(dose, -drive));
-      if (to == 6 && dose < 0)
-        dose = std::max(-63, std::min(dose, -drive));
-      if (std::abs(drive + dose) > MAX_DRIVE)
-        return false;
-      this->push_[y * WIDTH + x] = dose;
-      bits |= std::abs(dose);
-    }
-  }
-  if (bits == 0)
-    return false;
-  this->windowed_ = true;
-  this->plan_scans_(Pass::DOSE, bits);
-  ESP_LOGV(TAG, "Glide of x %u to %u, y %u to %u", (unsigned) this->window_.first_bank * 8,
-           (unsigned) this->window_.last_bank * 8 + 7, (unsigned) this->window_.first_row,
-           (unsigned) this->window_.last_row);
-  return true;
-}
 
-// A pass for each binary digit of `bits`, the shortest first.
-void CrowPanel42::plan_scans_(Pass pass, uint8_t bits) {
-  ESP_LOGV(TAG, "%s in scans of frames 0x%02X", pass == Pass::DOSE ? "Pushes" : "Cancelling glides' drive", bits);
-  for (int k = 0; k < 8; k++) {
-    if ((bits >> k) & 1) {
-      this->passes_[this->pass_count_] = pass;
-      this->scan_frames_[this->pass_count_] = 1 << k;
-      this->pass_count_++;
-    }
-  }
-}
 
-// The binary digits of the drive on the window's pixels.
-uint8_t CrowPanel42::drive_bits_() const {
-  uint8_t bits = 0;
-  for (size_t y = this->window_.first_row; y <= this->window_.last_row; y++) {
-    for (size_t x = this->window_.first_bank * 8; x != (this->window_.last_bank + 1) * 8u; x++)
-      bits |= std::abs(this->drive_[y * WIDTH + x]);
-  }
-  return bits;
-}
 
-// A scan's masks over the window: OLD white and NEW black (BW) pushes a pixel black, OLD black and
-// NEW white (WB) pushes it white, and both white (WW) holds. A glide pushes each pixel by the bits
-// of its dose; cancelling pushes it back by the bits of its drive.
-void HOT CrowPanel42::build_masks_(Pass pass, uint8_t frames) {
-  uint8_t *old_plane = this->masks_, *new_plane = this->masks_ + BIT_PLANE;
-  const int8_t *pushes = pass == Pass::DOSE ? this->push_ : this->drive_;
-  const int sign = pass == Pass::DOSE ? 1 : -1;
-  for (size_t y = this->window_.first_row; y <= this->window_.last_row; y++) {
-    const int8_t *row = pushes + y * WIDTH;
-    for (size_t bank = this->window_.first_bank; bank <= this->window_.last_bank; bank++) {
-      uint8_t old_bits = 0xFF, new_bits = 0xFF;
-      for (size_t j = 0; j != 8; j++) {
-        const int push = sign * row[bank * 8 + j];  // + black, - white
-        if ((std::abs(push) & frames) == 0)
-          continue;
-        const uint8_t bit = 0x80 >> j;
-        if (push > 0) {
-          new_bits &= ~bit;
-        } else {
-          old_bits &= ~bit;
-        }
-      }
-      old_plane[y * PLANE_ROW + bank] = old_bits;
-      new_plane[y * PLANE_ROW + bank] = new_bits;
-    }
-  }
-}
 
 // Into partial mode on the window, gates scanning the whole panel as for grey partials.
 void CrowPanel42::send_window_() { this->enter_window_(this->window_); }
@@ -1135,10 +935,12 @@ void CrowPanel42::enter_window_(const Window &window) {
                         static_cast<uint8_t>(y1 >> 8), static_cast<uint8_t>(y1 & 0xFF), 0x01});
 }
 
-// A scan's masks, the window's bytes of each, OLD then NEW, a 10 ms slice at a time.
-bool HOT CrowPanel42::send_own_planes_(Pass pass) {
+// A scan's masks, the window's bytes of each, OLD then NEW, a 10 ms slice at a time, gathered
+// ROWS_A_WRITE rows to a write.
+bool HOT CROWPANEL_FAST CrowPanel42::send_own_planes_(Pass pass) {
   const uint32_t start = millis();
   const size_t first = this->window_.first_bank, count = this->window_.last_bank - first + 1;
+  uint8_t data[ROWS_A_WRITE * PLANE_ROW];
   while (this->plane_ != 2) {
     const bool new_plane = this->plane_ == 1;
     if (!this->sending_) {
@@ -1149,8 +951,11 @@ bool HOT CrowPanel42::send_own_planes_(Pass pass) {
     const uint8_t *plane = this->masks_ + (new_plane ? BIT_PLANE : 0);
     this->start_data_();
     while (this->row_ <= this->window_.last_row) {
-      this->write_array(plane + this->row_ * PLANE_ROW + first, count);
-      this->row_++;
+      const size_t rows = std::min<size_t>(ROWS_A_WRITE, this->window_.last_row + 1 - this->row_);
+      for (size_t r = 0; r != rows; r++)
+        memcpy(data + r * count, plane + (this->row_ + r) * PLANE_ROW + first, count);
+      this->write_array(data, rows * count);
+      this->row_ += rows;
       if (this->row_ <= this->window_.last_row && millis() - start > epaper_spi::MAX_TRANSFER_TIME) {
         this->disable();
         return false;
@@ -1164,257 +969,11 @@ bool HOT CrowPanel42::send_own_planes_(Pass pass) {
   return true;
 }
 
-// After the last pass: a glide adds its doses to the window's drive, and cancelling clears it; a
-// tick has already recorded its own.
-void CrowPanel42::record_drive_(Pass last) {
-  if (this->drive_ == nullptr)
-    return;
-  const bool glide = last == Pass::DOSE && !this->ticking_, cancelled = this->passes_[0] == Pass::UNDOSE;
-  if (!glide && !cancelled && !this->ticking_)
-    return;
-  if (glide || cancelled) {
-    for (size_t y = this->window_.first_row; y <= this->window_.last_row; y++) {
-      for (size_t x = this->window_.first_bank * 8; x != (this->window_.last_bank + 1) * 8u; x++) {
-        int8_t &drive = this->drive_[y * WIDTH + x];
-        this->driven_count_ -= drive != 0;
-        drive = glide ? drive + this->push_[y * WIDTH + x] : 0;
-        this->driven_count_ += drive != 0;
-      }
-    }
-  }
-  ESP_LOGV(TAG, "%u pixels driven", (unsigned) this->driven_count_);
-}
-
-// Live ticks. A stream of equal refreshes drives harder than the same frames given as binary
-// digits: at 12 °C, from a settled white, refreshes of 4 frames at 200 Hz left 0.89, 0.70, 0.52,
-// 0.40, 0.31, 0.25, 0.18, 0.14 and 0.11 after 4, 8, 12, 16, 20, 24, 32, 40 and 48 frames; from a
-// settled black, 0.11, 0.26, 0.46, 0.64, 0.75, 0.82, 0.90, 0.93 and 0.96. (Refreshes of 2 frames
-// reached 0.18 and 0.95, of 8 frames 0.03 and 1.03.) A tick pushes a pixel 4 frames along one of
-// these, read from wherever the model has it; beyond 48 frames they are extrapolated.
-static constexpr uint8_t TICK = 4;
-static constexpr int TICK_POINTS = 11;
-static constexpr float TICK_BLACK[TICK_POINTS][2] = {{0, .99f},  {4, .89f},  {8, .70f},  {12, .52f},
-                                                     {16, .40f}, {20, .31f}, {24, .25f}, {32, .18f},
-                                                     {40, .14f}, {48, .11f}, {64, .08f}};
-static constexpr float TICK_WHITE[TICK_POINTS][2] = {{0, .03f},  {4, .11f},  {8, .26f},  {12, .46f},
-                                                     {16, .64f}, {20, .75f}, {24, .82f}, {32, .90f},
-                                                     {40, .93f}, {48, .96f}, {64, .98f}};
-// Each level's lightness, 0 to 255, as a grey refresh draws it.
-static constexpr uint8_t LEVEL_LIGHT[7] = {0, 43, 85, 128, 170, 213, 255};
-
-// Lightness after a curve's frames, and the frames to a lightness, linear between the points.
-static float curve_at(const float (&curve)[TICK_POINTS][2], float frames) {
-  for (int i = 1; i < TICK_POINTS; i++) {
-    if (frames <= curve[i][0]) {
-      const float along = (frames - curve[i - 1][0]) / (curve[i][0] - curve[i - 1][0]);
-      return curve[i - 1][1] + along * (curve[i][1] - curve[i - 1][1]);
-    }
-  }
-  return curve[TICK_POINTS - 1][1];
-}
-static float curve_frames(const float (&curve)[TICK_POINTS][2], float light) {
-  for (int i = 1; i < TICK_POINTS; i++) {
-    const float a = curve[i - 1][1], b = curve[i][1];
-    if ((light - a) * (light - b) <= 0)
-      return curve[i - 1][0] + (light - a) / (b - a) * (curve[i][0] - curve[i - 1][0]);
-  }
-  return std::abs(light - curve[0][1]) < std::abs(light - curve[TICK_POINTS - 1][1]) ? 0 : curve[TICK_POINTS - 1][0];
-}
-
-// Where a tick of black or of white takes a pixel at each lightness.
-struct TickSteps {
-  uint8_t black[256], white[256];
-  TickSteps() {
-    for (int e = 0; e < 256; e++) {
-      const float light = e / 255.0f;
-      const float b = curve_at(TICK_BLACK, curve_frames(TICK_BLACK, light) + TICK);
-      const float w = curve_at(TICK_WHITE, curve_frames(TICK_WHITE, light) + TICK);
-      this->black[e] = static_cast<uint8_t>(std::lround(std::min(light, b) * 255));
-      this->white[e] = static_cast<uint8_t>(std::lround(std::max(light, w) * 255));
-    }
-  }
-};
-static const TickSteps &tick_steps() {
-  static const TickSteps steps;
-  return steps;
-}
-
-// Which way a tick pushes a pixel at lightness `now`, with drive `drive`, towards level `to`: +1
-// black, -1 white, 0 hold. A grey moves while a tick brings it nearer; black and white go as far
-// as ticks still darken or lighten them, and then, while they carry drive the other way, on
-// further, which changes nothing to see but pays it back.
-static int tick_push(const TickSteps &steps, uint8_t now, uint8_t to, int drive) {
-  if (to == 0) {
-    if (steps.black[now] + 2 < now || drive <= -TICK)
-      return 1;
-    return 0;
-  }
-  if (to == 6) {
-    if (steps.white[now] > now + 2 || drive >= TICK)
-      return -1;
-    return 0;
-  }
-  const int target = LEVEL_LIGHT[to], away = std::abs(now - target);
-  if (target < now && std::abs(steps.black[now] - target) + 2 < away)
-    return 1;
-  if (target > now && std::abs(steps.white[now] - target) + 2 < away)
-    return -1;
-  return 0;
-}
-
-// tick_push for pixels with no drive to pay back, looked up.
-struct TickDecisions {
-  int8_t push[7][256];
-  explicit TickDecisions(const TickSteps &steps) {
-    for (int to = 0; to < 7; to++) {
-      for (int now = 0; now < 256; now++)
-        this->push[to][now] = static_cast<int8_t>(tick_push(steps, now, to, 0));
-    }
-  }
-};
-static const TickDecisions &tick_decisions() {
-  static const TickDecisions decisions(tick_steps());
-  return decisions;
-}
-static inline int decide(const TickDecisions &decisions, uint8_t now, uint8_t to, int drive) {
-  const int push = decisions.push[to][now];
-  if (push != 0)
-    return push;
-  if (to == 0 && drive <= -TICK)
-    return 1;
-  if (to == 6 && drive >= TICK)
-    return -1;
-  return 0;
-}
-
-// The model starts from the levels last drawn.
-void CrowPanel42::estimate_levels_() {
-  for (size_t y = 0; y != HEIGHT; y++) {
-    for (size_t x = 0; x != WIDTH; x++)
-      this->estimate_[y * WIDTH + x] = LEVEL_LIGHT[level_at(this->shown_, x, y)];
-  }
-  this->estimate_valid_ = true;
-}
-
-// A tick, in live mode: the window around what changed since the last frame drawn and what is
-// still on its way, each pixel in it pushed a tick towards its level or held, the masks built
-// here as the model and the drive record move on. A pixel whose drive would pass the record's
-// limit holds until a grey refresh settles it.
-bool CrowPanel42::plan_tick_() {
-  if (!this->live_ || this->grey_requested_ || !this->shown_valid_)
-    return false;
-  RAMAllocator<uint8_t> allocator;
-  if (this->drive_ == nullptr) {
-    this->drive_ = reinterpret_cast<int8_t *>(allocator.allocate(WIDTH * HEIGHT));
-    if (this->drive_ != nullptr)
-      memset(this->drive_, 0, WIDTH * HEIGHT);
-  }
-  if (this->masks_ == nullptr)
-    this->masks_ = allocator.allocate(2 * BIT_PLANE);
-  if (this->estimate_ == nullptr)
-    this->estimate_ = allocator.allocate(WIDTH * HEIGHT);
-  if (this->moving_banks_ == nullptr) {
-    this->moving_banks_ = allocator.allocate(BIT_PLANE);
-    if (this->moving_banks_ != nullptr)
-      memset(this->moving_banks_, 0, BIT_PLANE);
-  }
-  if (this->drive_ == nullptr || this->masks_ == nullptr || this->estimate_ == nullptr || this->moving_banks_ == nullptr)
-    return false;
-  if (!this->estimate_valid_)
-    this->estimate_levels_();
-  Window window = this->moving_;
-  if (this->find_changed_window_())
-    merge(window, this->window_);
-  this->moving_ = EMPTY;
-  if (is_empty(window)) {
-    this->unchanged_ = true;
-    this->fast_loop_.stop();
-    return true;
-  }
-  this->window_ = window;
-  const TickSteps &steps = tick_steps();
-  const TickDecisions &decisions = tick_decisions();
-  uint8_t *old_plane = this->masks_, *new_plane = this->masks_ + BIT_PLANE;
-  bool pushed = false;
-  uint32_t blacks = 0, whites = 0, held = 0;
-  for (size_t y = window.first_row; y <= window.last_row; y++) {
-    for (size_t bank = window.first_bank; bank <= window.last_bank; bank++) {
-      uint8_t old_bits = 0xFF, new_bits = 0xFF;
-      uint8_t &moving = this->moving_banks_[y * PLANE_ROW + bank];
-      // Eight pixels that have arrived and whose levels have not changed hold.
-      const size_t pair = y * this->row_width_ + bank * 4;
-      if (!moving && memcmp(this->pixels_ + pair, this->shown_ + pair, 4) == 0) {
-        old_plane[y * PLANE_ROW + bank] = 0xFF;
-        new_plane[y * PLANE_ROW + bank] = 0xFF;
-        continue;
-      }
-      moving = 0;
-      const uint8_t *levels = this->pixels_ + pair;
-      uint8_t *estimates = this->estimate_ + y * WIDTH + bank * 8;
-      int8_t *drives = this->drive_ + y * WIDTH + bank * 8;
-      for (size_t j = 0; j != 8; j++) {
-        const uint8_t to = (j & 1) ? levels[j >> 1] & 0x0F : levels[j >> 1] >> 4;
-        uint8_t &now = estimates[j];
-        int8_t &drive = drives[j];
-        const int push = decide(decisions, now, to, drive);
-        if (push != 0 && std::abs(drive + push * TICK) > MAX_DRIVE)
-          held++;
-        if (push == 0 || std::abs(drive + push * TICK) > MAX_DRIVE)
-          continue;
-        (push > 0 ? blacks : whites)++;
-        if (push > 0) {
-          new_bits &= ~(0x80 >> j);
-          now = steps.black[now];
-        } else {
-          old_bits &= ~(0x80 >> j);
-          now = steps.white[now];
-        }
-        this->driven_count_ -= drive != 0;
-        drive += push * TICK;
-        this->driven_count_ += drive != 0;
-        pushed = true;
-        const int next = decide(decisions, now, to, drive);
-        if (next != 0 && std::abs(drive + next * TICK) <= MAX_DRIVE)
-          moving = 1;
-      }
-      if (moving)
-        merge(this->moving_, {static_cast<uint8_t>(bank), static_cast<uint8_t>(bank), static_cast<uint16_t>(y),
-                              static_cast<uint16_t>(y)});
-      old_plane[y * PLANE_ROW + bank] = old_bits;
-      new_plane[y * PLANE_ROW + bank] = new_bits;
-    }
-  }
-  if (!pushed) {
-    memcpy(this->shown_, this->pixels_, this->buffer_length_);
-    this->unchanged_ = true;
-    this->fast_loop_.stop();
-    return true;
-  }
-  this->fast_loop_.start();
-  ESP_LOGV(TAG, "Tick of x %u to %u, y %u to %u: %u black, %u white, %u held at their limit",
-           (unsigned) window.first_bank * 8, (unsigned) window.last_bank * 8 + 7, (unsigned) window.first_row,
-           (unsigned) window.last_row, (unsigned) blacks, (unsigned) whites, (unsigned) held);
-  this->windowed_ = true;
-  this->ticking_ = true;
-  this->passes_[this->pass_count_] = Pass::DOSE;
-  this->scan_frames_[this->pass_count_] = TICK;
-  this->pass_count_++;
-  return true;
-}
-
-// While a tick runs, an update waits for it, and the latest frame wins.
-void CrowPanel42::update() {
-  if (this->live_ && this->state_ != epaper_spi::EPaperState::IDLE) {
-    this->update_waiting_ = true;
-    return;
-  }
-  CrowPanelBase::update();
-}
 
 // Glides and ticks leave their masks in the planes. Before anything else runs, or a deep sleep,
 // the glass's reading goes back into both planes there, in partial mode: everywhere else they
 // already hold it, and a black and white partial compares against them.
-void CrowPanel42::copy_stale_reading_() {
+void CrowPanel42::restore_reading_() {
   if (is_empty(this->stale_) || this->glass_ == nullptr)
     return;
   this->wait_idle_(500);
@@ -1428,7 +987,20 @@ void CrowPanel42::copy_stale_reading_() {
     this->disable();
   }
   this->command(0x92);
-  this->stale_ = EMPTY;
+  this->stale_ = EMPTY_WINDOW;
+}
+
+const CrowPanel42::GlideTuning *CrowPanel42::glide_tuning_() const { return &GLIDES; }
+
+// The ink's speed against 11 °C, where the glides were tuned, along the same curve as the frame
+// rates.
+float CrowPanel42::speed_() const {
+  float celsius = this->panel_celsius_;
+#ifdef USE_SENSOR
+  if (this->temperature_ != nullptr && !std::isnan(this->temperature_->state))
+    celsius = this->temperature_->state;
+#endif
+  return std::isnan(celsius) ? 1 : refresh_seconds(TUNED_CELSIUS) / refresh_seconds(celsius);
 }
 
 }  // namespace esphome::crowpanel_42

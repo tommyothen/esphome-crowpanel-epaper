@@ -41,6 +41,10 @@ class CrowPanel579 : public crowpanel_epaper::CrowPanelBase {
   void deep_sleep() override;
 
   bool send_planes_(const Source &old_source, const Source &new_source) override;
+  bool send_own_planes_(Pass pass) override;
+  const GlideTuning *glide_tuning_() const override;
+  float speed_() const override;
+  void restore_reading_() override;
   void start_pass_(Pass pass) override;
   // A hardware reset, which also switches the supplies off, then deep sleep.
   void reset_controllers_() override;
@@ -62,6 +66,7 @@ class CrowPanel579 : public crowpanel_epaper::CrowPanelBase {
   uint8_t frame_rate_for_temperature_() const;
   int band_() const;
   void wind_down_();
+  void wake_controllers_();
   void switch_supplies_off_();
   // Put the controllers into deep sleep now, supplies off first.
   void sleep_controllers_();

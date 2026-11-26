@@ -35,6 +35,10 @@ static constexpr uint8_t UPDATE_FULL = 0xF7;
 // Frame rates (byte 224 of a waveform). Every waveform here is written for 50 Hz.
 static constexpr uint8_t FRAMES_37_5_HZ = 0x09, FRAMES_50_HZ = 0x02, FRAMES_75_HZ = 0x03, FRAMES_100_HZ = 0x04,
                          FRAMES_125_HZ = 0x05;
+// The fastest: timed with BUSY, a refresh costs 10.3 ms beyond its frames, 5.1 ms each, at 0x08;
+// 0x00 to 0x08 run at about 15, 25, 49, 74, 99, 124, 148, 173 and 195 Hz, 0x09 to 0x0F at 37, 62, 86,
+// 111, 135, 161 and 186.
+static constexpr uint8_t FRAMES_195_HZ = 0x08;
 static constexpr uint8_t UPDATE_SUPPLIES_DISPLAY = 0xCC;
 static constexpr uint8_t UPDATE_DISPLAY = 0x0C;
 static constexpr uint8_t SUPPLIES_OFF = 0x03;
@@ -221,6 +225,31 @@ static constexpr SimpleWaveform CORRECTION{{FAST_FRAMES, 0, 0}, {{0}, {1}, {2}, 
 // the way over, then 25 frames of its own colour, so it ends where it was, having blinked. 40
 // frames against 25 is the one push it cancels; 30 against 15 left whites at 0.96 on the camera.
 static constexpr uint8_t SETTLE_RETURN = 25;
+// One of a glide's scans, or a tick, or a scan cancelling them: with the planes as masks, black on
+// BW and white on WB for `frames` frames (two phases past the 63 a phase holds), WW and BB holding.
+static SimpleWaveform scan_waveform(uint8_t frames) {
+  const uint8_t a = frames > 63 ? frames / 2 : frames, b = static_cast<uint8_t>(frames - a);
+  return SimpleWaveform{{a, b, 0}, {{0}, {0}, {1, 1}, {2, 2}, {0}}};
+}
+
+// Glides and ticks, at 195 Hz. Not yet measured on this panel: the 4.2"'s, with a quarter more
+// frames, as this panel's fast partial needs 15 frames at 50 Hz where the 4.2"'s needs 12.
+static constexpr CrowPanel579::GlideTuning GLIDES{
+    {
+        {0, -6, -14, -21, -25, -31, -60},
+        {29, 0, -4, -8, -13, -21, -50},
+        {41, 16, 0, -3, -6, -15, -45},
+        {46, 21, 10, 0, -4, -11, -40},
+        {50, 26, 16, 9, 0, -6, -35},
+        {54, 29, 19, 13, 6, 0, -28},
+        {60, 30, 20, 15, 10, 6, 0},
+    },
+    {{0, .99f}, {5, .89f}, {10, .70f}, {15, .52f}, {20, .40f}, {25, .31f}, {30, .25f}, {40, .18f}, {50, .14f},
+     {60, .11f}, {80, .08f}},
+    {{0, .03f}, {5, .11f}, {10, .26f}, {15, .46f}, {20, .64f}, {25, .75f}, {30, .82f}, {40, .90f}, {50, .93f},
+     {60, .96f}, {80, .98f}},
+};
+
 static constexpr SimpleWaveform SETTLE{
     {FAST_FRAMES + SETTLE_RETURN, SETTLE_RETURN, 0}, {{0}, {1, 2}, {2, 1}, {0}, {0}}};
 
@@ -361,6 +390,18 @@ void CrowPanel579::set_ram_area_(bool left, uint16_t first_y, uint16_t end_y) {
 // else, already hold what is on the glass. Cancelling and settling send the rows with a pixel out of
 // balance. Every other pass sends both planes whole.
 void CrowPanel579::start_pass_(Pass pass) {
+  if (pass == Pass::DOSE || pass == Pass::UNDOSE) {
+    // The controllers have no partial window and drive every pixel, so a scan sends the rows its
+    // masks are in, and those the last scans left masks in, which get the glass's reading back
+    // and so hold.
+    Window rows{0, static_cast<uint8_t>(PLANE_ROW - 1), this->window_.first_row, this->window_.last_row};
+    merge(rows, this->stale_);
+    this->first_row_ = rows.first_row;
+    this->end_row_ = rows.last_row + 1;
+    this->stale_ = {0, static_cast<uint8_t>(PLANE_ROW - 1), this->window_.first_row, this->window_.last_row};
+    this->plane_ = 0;
+    return;
+  }
   if (pass == Pass::CORRECT) {
     this->find_unsettled_rows_();
   } else if (pass != Pass::FAST && pass != Pass::PARTIAL) {
@@ -405,6 +446,76 @@ bool HOT CrowPanel579::send_planes_(const Source &old_source, const Source &new_
   }
   this->plane_ = 0;
   return true;
+}
+
+// A scan's planes, as send_planes_ sends them: the masks in the window's rows, and the glass's
+// reading in both planes in any other row, which holds.
+bool HOT CrowPanel579::send_own_planes_(Pass pass) {
+  const uint32_t start = millis();
+  uint8_t data[ROWS_A_WRITE * HALF];
+  while (this->plane_ != 4) {
+    const bool left = (this->plane_ & 1) == 0;
+    const bool new_plane = this->plane_ >= 2;
+    if (!this->sending_) {
+      this->set_ram_area_(left, this->first_row_, this->end_row_);
+      this->command((new_plane ? 0x24 : 0x26) | (left ? LEFT : 0));
+      this->row_ = this->first_row_;
+      this->sending_ = true;
+    }
+    const size_t offset = left ? 0 : RIGHT_OFFSET;
+    const Source masks{nullptr, this->masks_ + (new_plane ? BIT_PLANE : 0)}, reading{nullptr, this->glass_};
+    this->start_data_();
+    while (this->row_ != this->end_row_) {
+      const size_t rows = std::min<size_t>(ROWS_A_WRITE, this->end_row_ - this->row_);
+      for (size_t r = 0; r != rows; r++) {
+        const size_t y = this->row_ + r;
+        const bool masked = y >= this->window_.first_row && y <= this->window_.last_row;
+        this->plane_bytes_(masked ? masks : reading, y, offset, HALF, data + r * HALF);
+      }
+      this->write_array(data, rows * HALF);
+      this->row_ += rows;
+      if (this->row_ != this->end_row_ && millis() - start > epaper_spi::MAX_TRANSFER_TIME) {
+        this->disable();
+        return false;
+      }
+    }
+    this->disable();
+    this->sending_ = false;
+    this->plane_++;
+  }
+  this->plane_ = 0;
+  return true;
+}
+
+// The glass's reading back into both planes of the rows scans left masks in, waking the
+// controllers first if they have gone to sleep.
+void CrowPanel579::restore_reading_() {
+  if (is_empty(this->stale_) || this->glass_ == nullptr)
+    return;
+  this->wake_controllers_();
+  this->wait_idle_(500);
+  this->first_row_ = this->stale_.first_row;
+  this->end_row_ = this->stale_.last_row + 1;
+  this->plane_ = 0;
+  while (!this->send_planes_(Source{nullptr, this->glass_}, Source{nullptr, this->glass_})) {
+  }
+  this->stale_ = EMPTY_WINDOW;
+}
+
+const CrowPanel579::GlideTuning *CrowPanel579::glide_tuning_() const { return &GLIDES; }
+
+// The ink's speed against 50 Hz, where the waveforms were tuned, by the temperature's band.
+float CrowPanel579::speed_() const {
+  switch (this->frame_rate_for_temperature_()) {
+    case FRAMES_37_5_HZ:
+      return 0.75f;
+    case FRAMES_75_HZ:
+      return 1.5f;
+    case FRAMES_100_HZ:
+      return 2;
+    default:
+      return 1;
+  }
 }
 
 // Particles move faster in the warm and slower in the cold, so the self-balanced waveforms run at
@@ -485,9 +596,13 @@ void CrowPanel579::refresh_screen(bool partial) {
     case Pass::HALF_TO_WHITE:
       this->load_waveform_(HALF_TO_WHITE[this->band_()].bytes, FRAMES_125_HZ);
       break;
-    case Pass::BLACK_WHITE:  // run above
-    case Pass::DOSE:         // the 4.2"'s alone
+    case Pass::DOSE:
     case Pass::UNDOSE:
+      this->load_waveform_(scan_waveform(this->scan_frames_[this->pass_index_]).bytes, FRAMES_195_HZ);
+      this->command(0x20);
+      this->prerender_();
+      return;
+    case Pass::BLACK_WHITE:  // run above
       break;
   }
   this->command(0x20);
@@ -520,6 +635,8 @@ void CrowPanel579::load_waveform_(const uint8_t *waveform, uint8_t frame_rate) {
 // passes without another update, so the next one skips switching them on, but no longer than
 // MAX_ACTIVE_MS at a stretch.
 void CrowPanel579::deep_sleep() {
+  if (this->continue_live_())
+    return;  // ticking on, the supplies with it
   if (this->supplies_on_ && millis() - this->supplies_since_ >= MAX_ACTIVE_MS) {
     this->switch_supplies_off_();
     this->set_timeout("sleep", CONTROLLER_IDLE_MS, [this]() { this->sleep_controllers_(); });
@@ -559,20 +676,7 @@ void CrowPanel579::reset_controllers_() {
 // fast partial left a push out blink, and land where they were. The controllers may have gone to
 // sleep since, so they are woken as an update would wake them.
 void CrowPanel579::settle_now_() {
-  if (!this->awake_) {
-    if (this->reset_pin_ != nullptr) {
-      this->reset_pin_->digital_write(false);
-      delay(2);
-      this->reset_pin_->digital_write(true);
-      delay(10);
-    }
-    this->wait_idle_(100);
-    this->command(0x12);
-    this->wait_idle_(500);
-    this->cmd_data(0x18, {0x80});
-    this->awake_ = true;
-    this->supplies_on_ = false;
-  }
+  this->wake_controllers_();
   this->find_unsettled_rows_();
   this->plane_ = 0;
   while (!this->send_planes_(Source{nullptr, this->unsettled_}, Source{nullptr, this->glass_})) {
@@ -608,6 +712,24 @@ void CrowPanel579::sleep_controllers_() {
   }
   this->cmd_data(0x10, {0x01});
   this->awake_ = false;
+}
+
+// The controllers awake, as an update would wake them, waiting on BUSY.
+void CrowPanel579::wake_controllers_() {
+  if (this->awake_)
+    return;
+  if (this->reset_pin_ != nullptr) {
+    this->reset_pin_->digital_write(false);
+    delay(2);
+    this->reset_pin_->digital_write(true);
+    delay(10);
+  }
+  this->wait_idle_(100);
+  this->command(0x12);
+  this->wait_idle_(500);
+  this->cmd_data(0x18, {0x80});
+  this->awake_ = true;
+  this->supplies_on_ = false;
 }
 
 }  // namespace esphome::crowpanel_579

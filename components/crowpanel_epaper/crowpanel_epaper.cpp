@@ -60,6 +60,9 @@ void CrowPanelBase::setup() {
     this->unsettled_ = this->glass_ + this->bit_plane_;
     memset(this->unsettled_, 0, this->bit_plane_);
   }
+  // Grey partials, glides and ticks compare each frame with the last one drawn, level for level.
+  if (this->grey_ && this->pixels_ != nullptr)
+    this->shown_ = allocator.allocate(this->buffer_length_);
   this->setup_controllers_();
   // Waking from deep sleep, the panel kept its power, its picture and its RAM, so the count
   // carries on and the first update can be partial. Anything else starts from nothing.
@@ -87,6 +90,12 @@ void CrowPanelBase::on_safe_shutdown() {
   using epaper_spi::EPaperState;
   const bool settled =
       !this->next_pass_ && (this->state_ == EPaperState::IDLE || this->state_ == EPaperState::DEEP_SLEEP);
+  // Glides' drive lives in PSRAM, which the sleep loses, so a grey refresh cancels it now; and the
+  // planes get the glass's reading back wherever scans left masks.
+  if (settled && this->driven_count_ != 0)
+    this->settle_glides_now_();
+  if (settled)
+    this->restore_reading_();
   if (this->unsettled_count_ != 0) {
     if (settled) {
       this->settle_now_();
@@ -125,7 +134,7 @@ void CrowPanelBase::fill(Color color) {
   this->y_high_ = this->height_;
 }
 
-void HOT CrowPanelBase::draw_pixel_at(int x, int y, Color color) {
+void HOT CROWPANEL_FAST CrowPanelBase::draw_pixel_at(int x, int y, Color color) {
   if (!this->rotate_coordinates_(x, y))
     return;
   // A rectangle or a run of text is one colour, so its level is worked out once.
@@ -140,16 +149,34 @@ void HOT CrowPanelBase::draw_pixel_at(int x, int y, Color color) {
 }
 
 // The deadline runs from here. The wind-down is left running until the update starts, since an
-// update the lambda draws nothing for never does and would leave nothing to set it again.
+// update the lambda draws nothing for never does and would leave nothing to set it again. While
+// ticking, an update waits for the tick, and the next tick skips drawing when its frame was drawn
+// while the last one ran.
 void CrowPanelBase::update() {
-  if (this->state_ == epaper_spi::EPaperState::IDLE)
-    this->started_ = millis();
+  if (this->state_ != epaper_spi::EPaperState::IDLE) {
+    if (this->live_)
+      this->update_waiting_ = true;
+    else
+      EPaperBase::update();  // which says the display is busy
+    return;
+  }
+  this->started_ = millis();
+  // A tick planned ahead runs next whatever was asked for since; an update asked for during it
+  // draws afresh after it.
+  if (this->planned_ahead_ || (this->prerendered_ && !this->update_waiting_)) {
+    this->prerendered_ = false;
+    this->set_state_(epaper_spi::EPaperState::RESET);
+    this->enable_loop();
+    return;
+  }
+  this->prerendered_ = false;
+  this->update_waiting_ = false;
   EPaperBase::update();
 }
 
 // Plane bytes offset to offset + count of row y: from the buffer through a table, or from a bit
 // plane as they are. Plane byte j holds pixels 8j to 8j + 7, the first in the top bit.
-void HOT CrowPanelBase::plane_bytes_(const Source &source, size_t y, size_t offset, size_t count, uint8_t *out) {
+void HOT CROWPANEL_FAST CrowPanelBase::plane_bytes_(const Source &source, size_t y, size_t offset, size_t count, uint8_t *out) {
   if (source.plane != nullptr) {
     memcpy(out, source.plane + y * this->plane_row_ + offset, count);
     return;
@@ -169,7 +196,7 @@ void HOT CrowPanelBase::plane_bytes_(const Source &source, size_t y, size_t offs
 }
 
 // FNV-1a over a row's black and white reading.
-static uint32_t row_hash(const uint8_t *row, size_t length) {
+static uint32_t CROWPANEL_FAST row_hash(const uint8_t *row, size_t length) {
   uint32_t hash = 2166136261u;
   for (size_t i = 0; i != length; i++)
     hash = (hash ^ row[i]) * 16777619u;
@@ -221,8 +248,26 @@ void CrowPanelBase::find_unsettled_rows_() {
 void CrowPanelBase::plan_update_() {
   this->pass_count_ = 0;
   this->unchanged_ = false;
+  this->ticking_ = false;
+  this->live_update_ = false;
   this->plan_started_();
-  if (!this->plan_own_update_()) {
+  if (this->update_count_ != 0 && this->plan_tick_())
+    return;  // a tick records itself as it plans
+  this->restore_reading_();
+  // A glide that would take a pixel's drive past its record's limit settles instead: in its window
+  // where the driver can, else by the full refresh due anyway.
+  bool planned = false;
+  if (this->update_count_ != 0) {
+    planned = this->plan_glide_();
+    if (!planned && this->glide_overflowed_ && !this->settles_windows_())
+      this->update_count_ = 0;
+  }
+  // A full refresh cancels every glide's drive first.
+  if (this->update_count_ == 0 && this->driven_count_ != 0) {
+    this->window_ = this->whole_window_();
+    this->plan_scans_(Pass::UNDOSE, this->drive_bits_());
+  }
+  if (!planned && (this->update_count_ == 0 || !this->plan_own_update_())) {
     if (this->update_count_ != 0) {
       if (!this->find_changed_rows_()) {
         this->unchanged_ = true;
@@ -243,8 +288,14 @@ void CrowPanelBase::plan_update_() {
       }
     }
   }
-  if (!this->unchanged_)
-    glass_rows_valid = false;  // until this update has finished
+  if (this->unchanged_)
+    return;
+  glass_rows_valid = false;  // until this update has finished
+  this->estimate_valid_ = false;  // ticks model the levels afresh from the frame this one draws
+  // Scans follow each other closely, so the main loop runs unpaced until the update ends.
+  const Pass *passes = this->passes_, *end = passes + this->pass_count_;
+  if (std::find(passes, end, Pass::DOSE) != end || std::find(passes, end, Pass::UNDOSE) != end)
+    this->fast_loop_.start();
 }
 
 void CrowPanelBase::plan_grey_passes_() {
@@ -268,7 +319,10 @@ bool CrowPanelBase::transfer_data() {
     if (this->unchanged_)
       return true;
     this->pass_started_ = true;
-    this->start_pass_(this->passes_[this->pass_index_]);
+    const Pass pass = this->passes_[this->pass_index_];
+    if ((pass == Pass::DOSE || pass == Pass::UNDOSE) && !this->ticking_)
+      this->build_masks_(pass, this->scan_frames_[this->pass_index_]);
+    this->start_pass_(pass);
   }
   switch (this->passes_[this->pass_index_]) {
     case Pass::FAST:
@@ -304,11 +358,26 @@ void CrowPanelBase::power_off() {
   }
   const Pass last = this->passes_[this->pass_index_];
   this->pass_index_ = 0;
-  if (this->unchanged_)
-    return;
+  // Live updates do not count towards a full refresh, so none interrupts an animation.
+  if (this->live_update_)
+    this->update_count_ = (this->update_count_ + this->full_update_every_ - 1) % this->full_update_every_;
+  if (this->unchanged_ || this->ticking_)
+    return;  // a tick recorded itself as it planned
   const Pass *passes = this->passes_, *end = passes + this->pass_count_;
   this->record_glass_(last == Pass::FAST, std::find(passes, end, Pass::CORRECT) != end);
-  this->copying_ = this->copies_after_(last);
+  // A scan leaves masks in the planes; the reading goes back when something else needs it.
+  this->copying_ = last != Pass::DOSE && this->copies_after_(last);
+  if (this->copying_)
+    this->stale_ = EMPTY_WINDOW;
+  this->record_drive_(last);
+  if (last == Pass::DOSE) {
+    this->drew_window_();  // a glide drew the frame near enough
+  } else if ((last == Pass::GREY || last == Pass::HALF_TO_WHITE) && this->shown_ != nullptr) {
+    memcpy(this->shown_, this->pixels_, this->buffer_length_);
+    this->shown_valid_ = true;
+    this->dirty_ = EMPTY_WINDOW;
+    this->rows_drawn_(0, this->height_ - 1);
+  }
   this->update_finished_(last);
 }
 
@@ -316,9 +385,10 @@ void CrowPanelBase::power_off() {
 // partial, and with the bit planes, which pixels a fast partial has pushed out of balance (each
 // change flips its pixel) or that cancelling has put right.
 void CrowPanelBase::record_glass_(bool fast, bool corrected) {
+  this->record_glass_rows_(0, this->height_, fast, corrected);
+}
+void CROWPANEL_FAST CrowPanelBase::record_glass_rows_(uint16_t first, uint16_t end, bool fast, bool corrected) {
   uint8_t row[MAX_PLANE_ROW];
-  uint16_t first, end;
-  this->changed_rows_(first, end);
   for (size_t y = first; y != end; y++) {
     this->plane_bytes_(WHITE_SOURCE, y, 0, this->plane_row_, row);
     glass_rows[y] = row_hash(row, this->plane_row_);
@@ -393,6 +463,12 @@ void CrowPanelBase::give_up_() {
   this->pass_index_ = 0;
   this->pass_started_ = false;
   this->next_pass_ = false;
+  this->ticking_ = false;
+  this->prerendered_ = false;
+  this->planned_ahead_ = false;
+  this->update_waiting_ = false;
+  this->moving_ = EMPTY_WINDOW;
+  this->fast_loop_.stop();
   this->forget_();
   this->glass_valid_ = false;
   glass_rows_valid = false;

@@ -8,6 +8,10 @@
 
 namespace esphome::crowpanel_epaper {
 
+// ESPHome builds for size; the loops a tick runs over every pixel of its window, and drawing, are
+// built for speed instead, which more than halves their time.
+#define CROWPANEL_FAST __attribute__((optimize("O2")))
+
 /**
  * What ELECROW's CrowPanel ESP32-S3 e-paper drivers share, whatever their controllers: the buffer
  * and its levels, the RAM planes made from it, the record of what the glass shows and of which
@@ -58,6 +62,7 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
 
   void setup() override;
   void loop() override;
+  // While a tick runs, an update waits for it, and the latest frame wins.
   void update() override;
   void on_safe_shutdown() override;
   void fill(Color color) override;
@@ -78,6 +83,34 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   // The panel's temperature, or near enough, for running the waveforms faster or slower.
   void set_temperature_sensor(sensor::Sensor *sensor) { this->temperature_ = sensor; }
 #endif
+  // Partial updates walk each changed pixel from its grey to its new one in a few short pushes,
+  // without flashing, rather than pushing it to black or white. The greys land near enough; the
+  // next grey refresh settles them exactly and cancels the pushes' drive. Needs grey.
+  void set_glide(bool glide) { this->glide_ = glide; }
+  // Partial updates as ticks, for things that move: each tick pushes every pixel a few frames
+  // towards the frame just drawn, if that brings it nearer, and the driver draws and ticks on by
+  // itself while anything is still on its way or the picture keeps changing, drawing the next
+  // frame while the panel runs the last. Greys land as near as a glide's. Needs grey.
+  void set_live(bool live);
+
+  // A window of the panel: rows down, and across in plane bytes, 8 pixels each.
+  struct Window {
+    uint8_t first_bank, last_bank;
+    uint16_t first_row, last_row;
+  };
+  static constexpr Window EMPTY_WINDOW{MAX_PLANE_ROW, 0, MAX_HEIGHT, 0};
+  static bool is_empty(const Window &window) { return window.first_row > window.last_row; }
+  static void merge(Window &into, const Window &window);
+
+  // A panel's glides and ticks, measured on it: for each level (row) to each other (column), the
+  // frames at its scan rate a glide pushes, + black and - white; and the lightness (0 to 1) after
+  // so many frames of ticks, from a settled white pushed black and a settled black pushed white.
+  struct GlideTuning {
+    int8_t glide[7][7];
+    float tick_black[11][2], tick_white[11][2];
+  };
+  // Frames a tick pushes.
+  static constexpr uint8_t TICK = 4;
 
   // Where a RAM plane's bytes come from: the buffer through a table from a buffer byte (two pixels)
   // to their two bits, or a bit plane as it is.
@@ -97,7 +130,7 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
     HALF_TO_BLACK,  // seven greys: the half step, the even four, the half step back
     EVEN_GREY,
     HALF_TO_WHITE,
-    DOSE,           // a glide: one of its scans pushing each pixel part way to its new grey
+    DOSE,           // a glide's scan, or a tick, pushing each pixel part way to its new grey
     UNDOSE,         // one of the scans cancelling glides' drive before a grey refresh
   };
 
@@ -119,8 +152,20 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   // A driver's own kind of update, planned in passes_; false to plan as the base does, after any
   // passes the driver planned first.
   virtual bool plan_own_update_() { return false; }
-  // Sends the planes of a pass only the driver knows; true once they are all out.
+  // Sends a scan's masks (masks_, in the window), in slices; true once they are all out.
   virtual bool send_own_planes_(Pass pass) { return true; }
+  // The panel's glide and tick tuning, or null for none.
+  virtual const GlideTuning *glide_tuning_() const { return nullptr; }
+  // How much faster the ink moves now than where the tuning was measured.
+  virtual float speed_() const { return 1; }
+  // Writes the glass's reading back into both planes where scans left their masks (stale_).
+  virtual void restore_reading_() {}
+  // Whether the driver can settle a window exactly, in greys, without a full refresh.
+  virtual bool settles_windows_() const { return false; }
+  // Makes the next update settle glides' drive: a full refresh unless the driver settles windows.
+  virtual void request_settle_() { this->request_full_update(); }
+  // Rows first to last now hold, in shown_, the levels last drawn.
+  virtual void rows_drawn_(uint16_t first, uint16_t last) {}
   virtual void pass_finished_() {}
   // After the last pass is recorded.
   virtual void update_finished_(Pass last) {}
@@ -128,11 +173,6 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   virtual void reading_changed_(size_t y, size_t i) {}
   // Whether the panel's RAM needs the glass's reading written to both planes after the last pass.
   virtual bool copies_after_(Pass last) const { return true; }
-  // The rows the last update can have changed, first to end, for the glass's record.
-  virtual void changed_rows_(uint16_t &first, uint16_t &end) const {
-    first = 0;
-    end = this->height_;
-  }
   // Whether cancelling cleared the record of the pixels in plane byte i of row y.
   virtual bool corrects_(size_t y, size_t i) const { return true; }
   // State a driver forgets when an update is given up on.
@@ -151,6 +191,36 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   void record_glass_(bool fast, bool corrected);
   void give_up_();
   void wait_idle_(uint32_t timeout_ms);
+  void record_glass_rows_(uint16_t first, uint16_t end, bool fast, bool corrected);
+
+  // Glides and ticks (glide.cpp).
+  Window whole_window_() const {
+    return {0, static_cast<uint8_t>(this->plane_row_ - 1), 0, static_cast<uint16_t>(this->height_ - 1)};
+  }
+  uint8_t level_at_(const uint8_t *buffer, size_t x, size_t y) const {
+    const uint8_t pair = buffer[y * this->row_width_ + x / 2];
+    return (x & 1) ? pair & 0x0F : pair >> 4;
+  }
+  bool find_changed_window_();
+  bool glide_buffers_();
+  void set_doses_();
+  bool plan_glide_();
+  bool plan_tick_();
+  int compute_tick_();
+  void plan_scans_(Pass pass, uint8_t bits);
+  uint8_t drive_bits_() const;
+  void clear_masks_();
+  void build_masks_(Pass pass, uint8_t frames);
+  void record_drive_(Pass last);
+  void drew_window_();
+  void estimate_levels_();
+  void build_tick_tables_();
+  int decide_(uint8_t now, uint8_t to, int drive) const;
+  // Called by a driver once a tick's refresh is running: draws the next frame meanwhile.
+  void prerender_();
+  // Called by a driver at the end of an update: whether ticking goes on, and if so arranges it.
+  bool continue_live_();
+  void settle_glides_now_();
 
   const size_t plane_row_;  // a RAM plane's row: 8 pixels a byte
   const size_t bit_plane_;  // a bit a pixel
@@ -181,6 +251,43 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   bool glass_valid_{false};
   uint32_t unsettled_count_{0};
   uint8_t *pixels_{nullptr};          // the buffer, when it is one block
+  // The levels last drawn, for grey partials, glides and ticks, and where the glass may differ from
+  // them: black and white partials left a reading there, or glides and ticks their near enough.
+  uint8_t *shown_{nullptr};
+  bool shown_valid_{false};
+  Window window_{};                   // this update's window: grey partial, glide or tick
+  Window dirty_{EMPTY_WINDOW};
+  // Glides and ticks. Each pixel's net drive since its last balanced refresh, in frames at the scan
+  // rate, + towards black; this glide's dose for each pixel in its window; a scan's masks, OLD then
+  // NEW, a bit a pixel each, holding (both white) everywhere outside the window.
+  bool glide_{false};
+  bool live_{false};
+  int8_t *drive_{nullptr};
+  uint32_t driven_count_{0};
+  int8_t doses_[7][7]{};
+  int8_t *push_{nullptr};
+  uint8_t scan_frames_[16]{};         // each DOSE or UNDOSE pass's frames
+  uint8_t *masks_{nullptr};
+  Window masked_{EMPTY_WINDOW};       // where masks_ holds anything but holding
+  Window stale_{EMPTY_WINDOW};        // where the panel's planes hold masks, not the reading
+  // Ticks: each pixel's lightness as modelled, 0 black to 255 white; which 8-pixel banks are still
+  // on their way, and their window; where a tick takes a lightness, and which way each level wants.
+  uint8_t *estimate_{nullptr};
+  bool estimate_valid_{false};
+  uint8_t *moving_banks_{nullptr};
+  Window moving_{EMPTY_WINDOW};
+  bool ticking_{false};               // this update is a tick, planned and recorded already
+  bool prerendered_{false};           // the next frame is drawn already
+  bool planned_ahead_{false};         // and its tick planned and recorded: it must run next
+  bool ahead_pushes_{false};          // that tick pushes anything
+  bool live_update_{false};           // this update is live, not counted towards a full refresh
+  bool update_waiting_{false};        // an update was asked for during a tick
+  bool tick_tables_ready_{false};
+  bool glide_overflowed_{false};      // the last glide planned would have passed a drive's limit
+  bool settle_requested_{false};      // the next partial settles exactly, where the driver can
+  uint8_t tick_black_[256]{}, tick_white_[256]{};
+  int8_t tick_push_[7][256]{};
+  HighFrequencyLoopRequester fast_loop_;  // the main loop unpaced while ticking
   uint32_t last_colour_{UINT32_MAX};  // draw_pixel_at's last colour and its level: white, all ones
   uint8_t last_level_{6};
   uint32_t started_{0};  // when the update running began
