@@ -67,7 +67,7 @@ CONFIG_SCHEMA = cv.All(
             # black and white (about 3.7 s). Partial refreshes stay black and white.
             cv.Optional(CONF_GREY, default=False): cv.boolean,
             # 7 runs each grey refresh in three passes, with a half step between each of the
-            # four greys (about 4.7 s). Needs grey.
+            # four greys (about 4.4 s). Needs grey.
             cv.Optional(CONF_GREY_LEVELS, default=4): cv.one_of(4, 7, int=True),
             # The panel's temperature, or near enough: the waveforms run faster in the warm and
             # slower in the cold, in the panel maker's bands. Without one they run as at 13 to 20 °C.
