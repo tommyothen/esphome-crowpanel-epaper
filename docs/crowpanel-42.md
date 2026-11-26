@@ -43,8 +43,8 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
 - **Frame rate.** 0x30 sets it in 5 Hz steps, from 5 Hz at 0x00 to 200 Hz;
   Elecrow uses 0x09, 50 Hz.
 - **Orientation.** RAM x runs along the 400 pixel side and y along the 300; with the
-  board landscape and the buttons on the right, the origin is top left and nothing
-  is mirrored.
+  board turned so Elecrow's factory menu reads normally, the origin is top left and
+  nothing is mirrored.
 - **Border** left floating (CDI 0xD7), as Elecrow leaves it, so no refresh drives it.
 
 ## Measured
