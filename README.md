@@ -76,6 +76,21 @@ display:
     grey_partials: true  # partials in greys, flashing only what changed
 ```
 
+A busy screen can have it both ways: fast black and white partials while things
+change, then, once it is still, `request_grey_partial()` redraws in greys just the
+window around everything changed since the last grey refresh, including areas a
+black and white partial changed and changed back:
+
+```yaml
+script:
+  - id: settle
+    mode: restart  # each button press starts the wait again
+    then:
+      - delay: 3s
+      - lambda: id(epd).request_grey_partial();
+      - component.update: epd
+```
+
 And **fast greys**: with `fast_greys: true`, grey refreshes shake each pixel twice
 and push it once instead of shaking it many times, so four or seven greys take
 2 s rather than 3.7 or 3.95, and grey partials likewise. Drawn over every other

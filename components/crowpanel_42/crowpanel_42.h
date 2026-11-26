@@ -87,8 +87,18 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   // A temperature to use instead of the panel's own, for running the waveforms faster or slower.
   void set_temperature_sensor(sensor::Sensor *sensor) { this->temperature_ = sensor; }
 #endif
+  // Make the next update, if partial, a grey refresh of the window around everything changed since
+  // the last frame drawn in greys, black and white partials included: so a busy screen can answer
+  // in black and white at once and settle into greys where it changed, once it is still. Needs grey.
+  void request_grey_partial() { this->grey_requested_ = true; }
   // The temperature the panel sensed when its supplies last came on, in °C; NAN before then.
   float panel_temperature() const { return this->panel_celsius_; }
+
+  // A partial window: rows down, and across in the controller's 8-pixel banks.
+  struct Window {
+    uint8_t first_bank, last_bank;
+    uint16_t first_row, last_row;
+  };
 
   // Where a RAM plane's bytes come from: the buffer through a table from a buffer byte (two pixels)
   // to their two bits, or a bit plane as it is.
@@ -186,13 +196,12 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   bool glass_valid_{false};
   uint32_t unsettled_count_{0};
   uint8_t *pixels_{nullptr};          // the buffer, when it is one block
-  uint8_t *shown_{nullptr};           // the last frame drawn, for grey partials
+  uint8_t *shown_{nullptr};           // the last frame drawn in greys, for grey partials
   bool shown_valid_{false};
+  bool grey_requested_{false};
   bool windowed_{false};              // this update refreshes only window_
-  struct {
-    uint8_t first_bank, last_bank;    // 8-pixel columns
-    uint16_t first_row, last_row;
-  } window_{};
+  Window window_{};
+  Window dirty_{PLANE_ROW, 0, HEIGHT, 0};  // what black and white partials have changed since; empty
   uint32_t last_colour_{UINT32_MAX};  // draw_pixel_at's last colour and its level
   uint8_t last_level_{0};
 };

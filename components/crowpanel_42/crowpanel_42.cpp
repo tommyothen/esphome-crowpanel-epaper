@@ -398,7 +398,7 @@ void CrowPanel42::setup() {
     memset(this->unsettled_, 0, BIT_PLANE);
   }
   // Grey partials compare each frame with the last one drawn, level for level.
-  if (this->grey_partials_ && this->pixels_ != nullptr)
+  if (this->grey_ && this->pixels_ != nullptr)
     this->shown_ = allocator.allocate(this->buffer_length_);
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) {
     glass_rows_valid = false;
@@ -728,21 +728,45 @@ void CrowPanel42::read_panel_temperature_() {
   ESP_LOGD(TAG, "Panel at %d °C", celsius);
 }
 
+// A window is empty when its first row is past its last.
+static constexpr CrowPanel42::Window EMPTY{CrowPanel42::PLANE_ROW, 0, CrowPanel42::HEIGHT, 0};
+static bool is_empty(const CrowPanel42::Window &window) { return window.first_row > window.last_row; }
+static void merge(CrowPanel42::Window &into, const CrowPanel42::Window &window) {
+  if (is_empty(window))
+    return;
+  if (is_empty(into)) {
+    into = window;
+    return;
+  }
+  into.first_bank = std::min(into.first_bank, window.first_bank);
+  into.last_bank = std::max(into.last_bank, window.last_bank);
+  into.first_row = std::min(into.first_row, window.first_row);
+  into.last_row = std::max(into.last_row, window.last_row);
+}
+
 // Decides what an update is, at its first transfer: a partial refresh when the count says so, fast
 // whenever the driver knows what the glass shows, or a full refresh, after cancelling any fast
 // partials' pushes. A partial in which no row changed has nothing to send or refresh. With grey
-// partials, a partial is a grey refresh of the window around what changed instead: exactly, with
-// the last frame drawn, or after a wake, the band of rows whose levels changed.
+// partials, or when asked, a partial is a grey refresh of the window around what changed since the
+// last frame drawn in greys instead: exactly, with that frame, or after a wake, the band of rows
+// whose levels changed; and around whatever black and white partials have touched since.
 void CrowPanel42::plan_update_() {
   this->pass_count_ = 0;
   this->unchanged_ = false;
   this->windowed_ = false;
-  if (this->update_count_ != 0 && this->grey_partials_ && this->pixels_ != nullptr &&
-      (this->shown_valid_ || shown_rows_valid)) {
-    if (!(this->shown_valid_ ? this->find_changed_window_() : this->find_changed_band_())) {
+  const bool grey_partial = this->update_count_ != 0 && this->grey_ && this->pixels_ != nullptr &&
+                            (this->grey_partials_ || this->grey_requested_) &&
+                            (this->shown_valid_ || shown_rows_valid);
+  this->grey_requested_ = false;
+  if (grey_partial) {
+    const bool changed = this->shown_valid_ ? this->find_changed_window_() : this->find_changed_band_();
+    if (!changed && is_empty(this->dirty_)) {
       this->unchanged_ = true;
       return;
     }
+    if (!changed)
+      this->window_ = this->dirty_;
+    merge(this->window_, this->dirty_);
     this->windowed_ = true;
     if (this->unsettled_in_window_())
       this->passes_[this->pass_count_++] = Pass::CORRECT;
@@ -994,14 +1018,24 @@ void CrowPanel42::power_off() {
     return;
   this->record_glass_(last == Pass::FAST, this->passes_[0] == Pass::CORRECT);
   this->copying_ = true;
-  if (this->shown_ != nullptr) {
-    memcpy(this->shown_, this->pixels_, this->buffer_length_);
-    this->shown_valid_ = true;
-  }
-  if (this->grey_partials_ && this->pixels_ != nullptr) {
-    for (size_t y = 0; y != HEIGHT; y++)
-      shown_rows[y] = this->level_row_hash_(y);
-    shown_rows_valid = true;
+  // The last frame drawn in greys, and the hash of each of its rows for after a wake, stay as they
+  // were through black and white partials, which instead grow the window the next grey partial
+  // covers: a fast one by the bytes whose reading changed, a balanced one from cold, after a wake
+  // and without the glass's reading, by the whole panel.
+  if (last == Pass::GREY || last == Pass::HALF_TO_WHITE) {
+    this->dirty_ = EMPTY;
+    if (this->shown_ != nullptr) {
+      memcpy(this->shown_, this->pixels_, this->buffer_length_);
+      this->shown_valid_ = true;
+      for (size_t y = 0; y != HEIGHT; y++)
+        shown_rows[y] = this->level_row_hash_(y);
+      shown_rows_valid = true;
+    }
+  } else if (last == Pass::BLACK_WHITE) {
+    this->dirty_ = EMPTY;
+    this->shown_valid_ = false;
+  } else if (last == Pass::PARTIAL) {
+    this->dirty_ = {0, static_cast<uint8_t>(PLANE_ROW - 1), 0, static_cast<uint16_t>(HEIGHT - 1)};
   }
 }
 
@@ -1021,6 +1055,9 @@ void CrowPanel42::record_glass_(bool fast, bool corrected) {
     for (size_t i = 0; i != PLANE_ROW; i++) {
       if (corrected && (!this->windowed_ || this->in_window_(y, i)))
         unsettled[i] = 0;
+      if (fast && glass[i] != row[i])
+        merge(this->dirty_, {static_cast<uint8_t>(i), static_cast<uint8_t>(i), static_cast<uint16_t>(y),
+                             static_cast<uint16_t>(y)});
       if (fast)
         unsettled[i] ^= glass[i] ^ row[i];
       glass[i] = row[i];
@@ -1102,6 +1139,7 @@ void CrowPanel42::give_up_() {
   this->glass_valid_ = false;
   this->shown_valid_ = false;
   this->windowed_ = false;
+  this->dirty_ = EMPTY;
   glass_rows_valid = false;
   shown_rows_valid = false;
   if (this->unsettled_ != nullptr)

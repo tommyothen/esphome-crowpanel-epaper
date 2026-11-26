@@ -96,6 +96,12 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   keeps a hash of each row's levels in RTC memory (1.2 KB): after a wake, a grey partial refreshes
   the band of rows whose levels changed, at full width, and an update that changed nothing drives
   nothing.
+- **Greys when asked.** The copy is of the last frame drawn in greys: black and white partials
+  leave it as it is and instead grow a window of the bytes whose reading they changed.
+  `request_grey_partial()` makes the next update a grey refresh of the window around both. A box
+  drawn, moved and taken away again by black and white partials over grey bands left a light
+  grey at 0.96, white; the requested grey partial redrew x 200 to 319 by y 100 to 219, exactly
+  where the readings had changed, and put it back at 0.71 against the band's 0.72.
 
 - **Fast greys.** The grey waveforms above shake a pixel many times and take 3.5 s. With
   `fast_greys`, a grey refresh at 100 Hz shakes every pixel twice (20 frames to black and 20 to
