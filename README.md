@@ -8,7 +8,7 @@ HMI boards. Tested with ESPHome 2026.10.
 | Board | Resolution | Component | Status |
 |---|---|---|---|
 | CrowPanel 5.79" | 792x272 | `crowpanel_579` | Ready |
-| CrowPanel 4.2" | 400x300 | `crowpanel_42` | In progress |
+| CrowPanel 4.2" V1.2 (UC8276C) | 400x300 | `crowpanel_42` | Black and white, partials and four greys; seven greys not yet tuned |
 
 ## CrowPanel 5.79"
 
@@ -31,6 +31,32 @@ Compared with the panel's built-in black and white OTP refreshes:
 
 Panel wiring details, waveform notes and measurements are in
 [docs/crowpanel-579.md](docs/crowpanel-579.md).
+
+## CrowPanel 4.2"
+
+`crowpanel_42` drives the 4.2" V1.2 board (a green circular sticker on the
+back), whose UC8276C has no waveforms in its OTP: every refresh runs one the
+driver loads. It works as `crowpanel_579` does, with the same options and the
+same fast partials, cancelling and settling, and the pins default to the same
+wiring. V1.0 boards use an SSD1683 and are not supported yet.
+
+| Mode | Time (50 Hz) | Behaviour |
+|---|---|---|
+| Full black and white | 1.3 to 1.4 s | Balanced, Elecrow's waveform |
+| Full four greys | about 3.8 s | Measured 0.00, 0.26, 0.75 and 0.95 |
+| Full seven greys | about 4.4 s | Works, but the greys bunch towards white until tuned for this panel |
+| Partial, subsequent | about 0.6 s | One-way push with per-pixel balance tracking |
+
+```yaml
+display:
+  - platform: crowpanel_42
+    id: epd
+    grey: true
+    lambda: |-
+      it.print(20, 20, id(font), Color::BLACK, "Hello");
+```
+
+Notes and measurements are in [docs/crowpanel-42.md](docs/crowpanel-42.md).
 
 ## Minimal configuration
 
@@ -242,7 +268,8 @@ sides of the seam.
 - **Sleeping mid-update.** Entering deep sleep while `epaper_spi.is_updating`
   is true leaves any unsettled fast-partial pixels uncancelled and forces a
   full refresh on the next wake.
-- **CrowPanel 4.2".** `crowpanel_42` is still in progress and not ready to use.
+- **CrowPanel 4.2".** Seven greys are not yet tuned for its panel, the panel's own
+  temperature sensor is not read yet, and V1.0 boards (SSD1683) are not supported.
 
 ## Prior art
 
