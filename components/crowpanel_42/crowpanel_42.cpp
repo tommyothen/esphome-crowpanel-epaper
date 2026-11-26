@@ -395,13 +395,6 @@ void CrowPanel42::setup_controllers_() {
   if (this->grey_ && this->pixels_ != nullptr) {
     RAMAllocator<uint8_t> allocator;
     this->shown_ = allocator.allocate(this->buffer_length_);
-    if (this->glide_) {
-      this->drive_ = reinterpret_cast<int8_t *>(allocator.allocate(WIDTH * HEIGHT));
-      this->push_ = reinterpret_cast<int8_t *>(allocator.allocate(WIDTH * HEIGHT));
-      this->masks_ = allocator.allocate(2 * BIT_PLANE);
-      if (this->drive_ != nullptr)
-        memset(this->drive_, 0, WIDTH * HEIGHT);
-    }
   }
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) {
     shown_rows_valid = false;
@@ -1011,8 +1004,21 @@ void CrowPanel42::set_doses_() {
 // each binary digit the doses in the window around what changed need. Not when a pixel's drive
 // would pass what its record holds; the grey partial settles the window instead.
 bool CrowPanel42::plan_glide_() {
-  if (!this->glide_ || this->grey_requested_ || !this->shown_valid_ || this->drive_ == nullptr ||
-      this->push_ == nullptr || this->masks_ == nullptr)
+  if (!this->glide_ || this->grey_requested_ || !this->shown_valid_)
+    return false;
+  if (this->drive_ == nullptr) {
+    RAMAllocator<uint8_t> allocator;
+    this->drive_ = reinterpret_cast<int8_t *>(allocator.allocate(WIDTH * HEIGHT));
+    if (this->drive_ == nullptr)
+      return false;
+    memset(this->drive_, 0, WIDTH * HEIGHT);
+  }
+  if (this->push_ == nullptr) {
+    RAMAllocator<uint8_t> allocator;
+    this->push_ = reinterpret_cast<int8_t *>(allocator.allocate(WIDTH * HEIGHT));
+    this->masks_ = allocator.allocate(2 * BIT_PLANE);
+  }
+  if (this->push_ == nullptr || this->masks_ == nullptr)
     return false;
   if (!this->find_changed_window_()) {
     this->unchanged_ = true;
@@ -1041,6 +1047,7 @@ bool CrowPanel42::plan_glide_() {
 
 // A pass for each binary digit of `bits`, the shortest first.
 void CrowPanel42::plan_scans_(Pass pass, uint8_t bits) {
+  ESP_LOGV(TAG, "%s in scans of frames 0x%02X", pass == Pass::DOSE ? "Pushes" : "Cancelling glides' drive", bits);
   for (int k = 0; k < 8; k++) {
     if ((bits >> k) & 1) {
       this->passes_[this->pass_count_] = pass;

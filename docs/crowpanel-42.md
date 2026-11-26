@@ -105,6 +105,37 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   for a redrawn number). The first partial after a wake runs without the glass's reading, a
   balanced one, and grows the window by the rows it sent: a number redrawn after a wake, then
   settled, redrew y 192 to 259 and nothing else.
+- **How fast it can go.** Timed on SPI at 10 MHz with the supplies on: a refresh costs about
+  11 ms beyond its frames at 200 Hz (16 ms for one frame, 21 for two, 31 for four, 51 for
+  eight), about two frames' worth at any rate (63 ms for one frame at 50 Hz). A partial window
+  saves no refresh time, scanning all gates or only its own, but only its bytes need sending:
+  a 64x64 window with both planes and a one-frame refresh runs 58 times a second, the whole
+  panel 25 (24 ms of it the two 15 KB planes).
+- **Doses.** A pixel pushed one way for a few frames moves part of the way. From a settled
+  white, 0, 2, 4, 6, 8, 12, 16, 20, 28 and 40 frames of black at 200 Hz, given as refreshes of
+  1, 2, 4, 8, 16 and 32 frames (a pixel in those its count needs), left 0.99, 0.98, 0.90, 0.80,
+  0.64, 0.47, 0.31, 0.24, 0.12 and 0.05; from a settled black, as much white left 0.02, 0.04,
+  0.06, 0.11, 0.17, 0.31, 0.48, 0.67, 0.87 and 0.96. The same counts as one-frame refreshes
+  went only to 0.42 and 0.82: between refreshes a pixel rests, and starting again costs it.
+- **Glides.** With `grey_partials: glide` a partial update gives each changed pixel the frames
+  its old and new levels call for, from a 7x7 table, as a refresh for each binary digit of the
+  counts in the window, the planes as masks: OLD white and NEW black (BW) pushes black, OLD
+  black and NEW white (WB) pushes white, both white holds. In partial mode only the window's
+  bytes are sent. The table started from the curves above, read backwards, and was tuned on the
+  camera against an exact refresh of the same picture, a grid where cell (i, j) went from level
+  i to level j, cell by cell so the lamp's unevenness cancels: 0.071 out on average at first,
+  0.036 after two rounds, with the glide back from each glided level weighed in too (from
+  glided black, a shallower black than a grey refresh leaves, the first table overshot by
+  0.28). Two exact refreshes of the same cells differ by up to 0.10 here, so that is about the
+  floor. A box glides in 0.33 to 0.45 s, the whole panel in 1.06 s.
+- **A glide's drive.** Each pixel's net push since its last balanced refresh is kept in PSRAM, a
+  byte a pixel, in frames at 200 Hz. A grey refresh covering it, full or partial, starts with
+  scans pushing it back by exactly that; a glide that would take a pixel past 127 frames runs as
+  a grey partial instead, and a deep sleep settles every glide first. A box toggled between
+  white and level 1 (24 frames black, 40 white) glided seven times, then settled in greys, then
+  glided again; after a glide over the whole grid, a full refresh cancelled 102,852 pixels'
+  drive first, and after a glide out and back, the requested grey partial left every cell
+  within 0.03 of an exact refresh.
 - **Fast greys.** The grey waveforms above shake a pixel many times and take 3.5 s. With
   `fast_greys`, a grey refresh at 100 Hz shakes every pixel twice (20 frames to black and 20 to
   white) and then pushes once: white to black and back, black the other way, a grey to black, to

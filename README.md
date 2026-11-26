@@ -61,6 +61,7 @@ wiring. V1.0 boards use an SSD1683 and are not supported yet.
 | Full seven greys | about 3.95 s | Measured 0.00, 0.18, 0.34, 0.49, 0.69, 0.84 and 1.00 |
 | Partial, subsequent | about 0.44 s | One-way push with per-pixel balance tracking |
 | Grey partial (`grey_partials`) | about 3.75 s | Greys in the changed window only; the rest untouched |
+| Glide (`grey_partials: glide`) | 0.35 to 0.45 s for a box, 1.06 s whole panel | No flash: each changed pixel goes straight to its new grey, within about 0.04 |
 | Fast greys (`fast_greys`) | 2.0 s four or seven | Two shakes and a push: about twice as quick, erasing the picture before as well |
 
 ```yaml
@@ -101,6 +102,21 @@ script:
       - delay: 3s
       - lambda: id(epd).request_grey_partial();
       - component.update: epd
+```
+
+Or **glide**: with `grey_partials: glide`, a partial update takes each changed
+pixel straight from its grey to its new one, without flashing anything, in a
+few short pushes inside the window: a box in 0.35 to 0.45 s, the whole panel
+in 1.06 s. The greys land near enough, about 0.04 out on average and 0.13 at
+worst; the next grey refresh, full or asked for with `request_grey_partial()`,
+settles them exactly. Every push is recorded per pixel and cancelled before
+that refresh, and before a deep sleep the driver settles glides itself.
+
+```yaml
+display:
+  - platform: crowpanel_42
+    grey: true
+    grey_partials: glide  # no flash; greys settle exactly at the next grey refresh
 ```
 
 And **fast greys**: with `fast_greys: true`, grey refreshes shake each pixel twice
@@ -181,7 +197,7 @@ All pins default to the boards' fixed wiring, which the two share.
 
 | Option | Default | Notes |
 |---|---|---|
-| `grey_partials` | `false` | Partials redraw the window around what changed in greys; needs `grey: true` |
+| `grey_partials` | `false` | `true`: partials redraw the window around what changed in greys. `glide`: they take each changed pixel straight to its new grey without flashing. Needs `grey: true` |
 | `fast_greys` | `false` | Grey refreshes in two shakes and a push: about 2 s rather than 3.7 or 3.95; needs `grey: true` |
 | `temperature_sensor` | none | Used instead of the panel's own sensor, which the driver reads anyway |
 | `busy_pin` | `GPIO48`, inverted | The UC8276C holds BUSY low while it works |
@@ -282,6 +298,12 @@ glass, so the driver makes the next update a full one.
   settling pass cancels them instead: only those pixels blink (40 frames over
   and 25 back) and land where they were. A device that wakes, draws once and
   sleeps never makes a fast partial.
+- **Glides (4.2").** A glide pushes pixels by varying amounts, so it records
+  each pixel's net drive, in frames at 200 Hz, a byte a pixel in PSRAM. Before
+  any grey refresh that covers a pixel, full or partial, scans push it back by
+  exactly that much, hidden by the refresh. A glide that would take a pixel
+  past 127 frames either way settles its window in greys instead, and a deep
+  sleep, which would lose the record, settles every glide first.
 - **Discharge and power wind-down.** On the 5.79" every loaded waveform uses
   end option `0x22` to discharge the pixels after the last phase. The ±15 V
   supplies stay on for 5 s after an update so a follow-up skips switching them
