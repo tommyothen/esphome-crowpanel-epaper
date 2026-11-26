@@ -9,6 +9,6 @@ inline int &count() {
   return value;
 }
 
-enum Kind : int { NONE, PARTIAL, GREY, WAKE };
+enum Kind : int { NONE, PARTIAL, GREY, WAKE, SETTLE };
 
 }  // namespace demo
