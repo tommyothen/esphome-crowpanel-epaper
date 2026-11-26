@@ -152,6 +152,11 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   20, the refresh and the glass's record 40 and the rest 6. What greys look like in motion, and
   how near a moving picture settles once still, is not measured yet: the camera rig took its
   photos too late to tell (below).
+- **Real time.** A tick's frame is drawn, and its tick planned, while the panel runs the last
+  one, its per-pixel loop split over both cores, the hot loops built for speed rather than
+  size, and drawing a pixel skips the base's out-of-line rotation. Two boxes sliding over a
+  strip, the whole scene redrawn each frame, went from 8.4 ticks a second to 15 (16.5 with
+  SPI at 20 MHz, clean in every test); the live demo, a clock and a ball, runs at 23.
 - **The camera rig's timing.** The photo tool waits 0.5 s after the board logs a snapshot, then
   takes about a second to grab frames. A test that changes the panel within 1.5 s of a snapshot
   photographs the change, not what it meant to: two box-jump tests a second apart read as if

@@ -1,0 +1,76 @@
+# Live mode on the 4.2", no network: a ball bouncing round the panel, a clock counting the seconds
+# since boot, four greys, and how many ticks a second the panel is managing. In live mode the
+# driver draws the next frame while the panel shows the last, and goes on by itself while the
+# picture changes, so nothing here asks for updates after the first.
+esphome:
+  name: crowpanel-live-42
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: id(epd).request_full_update();
+        - component.update: epd
+        - wait_until:
+            condition:
+              not:
+                epaper_spi.is_updating: epd
+        - component.update: epd
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+  hardware_uart: UART0
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [crowpanel_42, crowpanel_epaper]
+
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+
+font:
+  - { file: "gfonts://Inter@700", id: f_clock, size: 72, bpp: 2, glyphs: ["0123456789:"] }
+  - { file: "gfonts://Inter@600", id: f_small, size: 16, bpp: 2, glyphsets: [GF_Latin_Core] }
+
+display:
+  - platform: crowpanel_42
+    id: epd
+    rotation: 90
+    grey: true
+    grey_partials: live
+    full_update_every: 255
+    lambda: |-
+      const uint32_t now = millis();
+      static uint32_t last = 0;
+      static float rate = 0;
+      if (last != 0 && now > last)
+        rate = rate * 0.9f + 100.0f / (now - last);
+      last = now;
+      const int w = it.get_width(), h = it.get_height();
+      it.fill(Color::WHITE);
+      const uint32_t s = now / 1000;
+      it.printf(w / 2, 52, id(f_clock), Color::BLACK, TextAlign::CENTER, "%02u:%02u", (unsigned) (s / 60 % 60),
+                (unsigned) (s % 60));
+      // A ball bouncing off the walls of the middle.
+      auto bounce = [](float p, float span) {
+        const float m = fmodf(p, 2 * span);
+        return m < span ? m : 2 * span - m;
+      };
+      const float t = now / 1000.0f;
+      const int r = 24, top = 128, bottom = h - 70;
+      it.rectangle(0, top - r - 2, w, bottom - top + 2 * r + 4, Color::BLACK);
+      it.filled_circle(r + 2 + bounce(t * 110, w - 2 * r - 4), top + bounce(t * 80, bottom - top), r, Color::BLACK);
+      for (int i = 0; i < 4; i++)
+        it.filled_rectangle(i * w / 4, h - 56, w / 4, 26, Color(i * 85, i * 85, i * 85));
+      it.printf(w / 2, h - 8, id(f_small), Color::BLACK, TextAlign::BASELINE_CENTER, "Live: %.0f ticks a second", rate);

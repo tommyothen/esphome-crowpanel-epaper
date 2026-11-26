@@ -12,7 +12,8 @@ HMI boards. Tested with ESPHome 2026.10.
 
 Both build on `crowpanel_epaper`, which holds what they share: the buffer and its
 levels, the planes made from it, the record of what the glass shows and of which
-pixels a fast partial left out of balance, and the update's passes. Each board's
+pixels a fast partial left out of balance, the update's passes, and glides and
+live ticks (below), which work the same on both. Each board's
 component holds only its controllers and their waveforms. List `crowpanel_epaper`
 alongside the board's component under `external_components`, or leave
 `components:` out to make every component available.
@@ -35,6 +36,12 @@ Compared with the panel's built-in black and white OTP refreshes:
 | Partial, first after boot or wake | about 1.3 s | Black and white, charge balanced, changed rows only; greys elsewhere survive (the panel's OTP partial fades them) |
 | Partial, subsequent | 0.4 to 0.5 s | One-way push with per-pixel balance tracking, changed rows only |
 | Partial, nothing changed | about 50 ms | Drawing only; the panel is not driven |
+| Glide (`grey_partials: glide`) | about 0.5 s for a box, 1.14 s whole panel | No flash: each changed pixel goes straight to its new grey; the next full refresh settles them |
+| Live (`grey_partials: live`) | about 11 ticks a second for a clock, a ball and a scrolling ticker | Each tick nudges pixels towards the latest frame |
+
+The 5.79"'s glides and live ticks run at 195 Hz, its controllers' fastest rate, with
+the 4.2"'s tuning scaled until they are measured on this panel; it has no partial
+window, so its glides settle at the next full refresh.
 
 Panel wiring details, waveform notes and measurements are in
 [docs/crowpanel-579.md](docs/crowpanel-579.md).
@@ -61,8 +68,8 @@ wiring. V1.0 boards use an SSD1683 and are not supported yet.
 | Full seven greys | about 3.95 s | Measured 0.00, 0.18, 0.34, 0.49, 0.69, 0.84 and 1.00 |
 | Partial, subsequent | about 0.44 s | One-way push with per-pixel balance tracking |
 | Grey partial (`grey_partials`) | about 3.75 s | Greys in the changed window only; the rest untouched |
-| Glide (`grey_partials: glide`) | 0.35 to 0.45 s for a box, 1.06 s whole panel | No flash: each changed pixel goes straight to its new grey, within about 0.04 |
-| Live (`grey_partials: live`, experimental) | about 9 ticks a second for a box sliding across a strip | Each update nudges pixels towards the latest frame; ticks on until everything arrives |
+| Glide (`grey_partials: glide`) | 0.32 to 0.38 s for a box, 0.93 s whole panel | No flash: each changed pixel goes straight to its new grey, within about 0.04 |
+| Live (`grey_partials: live`) | 23 ticks a second for a clock and a bouncing ball | Each tick nudges pixels towards the latest frame; ticks on until everything arrives |
 | Fast greys (`fast_greys`) | 2.0 s four or seven | Two shakes and a push: about twice as quick, erasing the picture before as well |
 
 ```yaml
@@ -107,8 +114,8 @@ script:
 
 Or **glide**: with `grey_partials: glide`, a partial update takes each changed
 pixel straight from its grey to its new one, without flashing anything, in a
-few short pushes inside the window: a box in 0.35 to 0.45 s, the whole panel
-in 1.06 s. The greys land near enough, about 0.04 out on average and 0.13 at
+few short pushes inside the window: a box in 0.32 to 0.38 s, the whole panel
+in 0.93 s. The greys land near enough, about 0.04 out on average and 0.13 at
 worst; the next grey refresh, full or asked for with `request_grey_partial()`,
 settles them exactly. Every push is recorded per pixel and cancelled before
 that refresh, and before a deep sleep the driver settles glides itself.
@@ -120,15 +127,21 @@ display:
     grey_partials: glide  # no flash; greys settle exactly at the next grey refresh
 ```
 
-**Live** (experimental): with `grey_partials: live`, each update is a short
-tick that pushes every pixel a little towards the frame just drawn, and the
-driver keeps drawing and ticking on its own until everything has arrived. An
-update asked for during a tick waits for it, so the latest frame wins. It suits
-things that move: redraw every 30 ms or so, and the panel follows as fast as
-the ink allows, about 0.3 to 0.5 s for a full black and white change. Pixels
-that have reached black or white keep being pushed the same way while their
-recorded drive points the other way, which changes nothing you can see but
-pays it back. The same record and settling as glides apply.
+**Live**: with `grey_partials: live`, each update is a short tick that pushes
+every pixel a little towards the frame just drawn. While the panel runs one
+tick, the driver draws the next frame and plans its tick, on both cores, and it
+carries on by itself for as long as the picture changes or anything is still on
+its way: draw by time (`millis()`) and the panel animates with nothing asking
+for updates. An update asked for during a tick waits for it, so the latest
+frame wins. The panel follows as fast as the ink allows, about 0.3 to 0.5 s for
+a full black and white change, so fast motion trails. Pixels at black or white
+keep being pushed the same way while their recorded drive points the other
+way, which changes nothing you can see but pays it back. Live ticks do not
+count towards `full_update_every`, so no full refresh interrupts an animation.
+The same record and settling as glides apply. A tick's time is mostly the
+refresh (31 ms), sending its window (10 MHz on the 4.2"; `data_rate: 20MHz`,
+beyond the UC8276C's datasheet but clean in every test here, took a busy
+animation from 15 to 16.5 ticks a second) and drawing the frame.
 
 And **fast greys**: with `fast_greys: true`, grey refreshes shake each pixel twice
 and push it once instead of shaking it many times, so four or seven greys take
@@ -202,13 +215,14 @@ All pins default to the boards' fixed wiring, which the two share.
 | `busy_pin` | `GPIO48` | Panel BUSY input |
 | `power_pin` | `GPIO7` | Switches the panel's ground through Q9; must be high before anything answers |
 | `data_rate` | `20MHz` | SPI clock rate (10 MHz on the 4.2", the UC8276C's limit) |
+| `grey_partials` | `false` | `glide`: partials take each changed pixel straight to its new grey without flashing. `live`: each update is a tick towards the latest frame, for things that move. Needs `grey: true` and PSRAM |
 | `lambda`, `pages` | none | Standard ESPHome drawing options; at most one may be set |
 
 `crowpanel_42` takes the same options, with these differences:
 
 | Option | Default | Notes |
 |---|---|---|
-| `grey_partials` | `false` | `true`: partials redraw the window around what changed in greys. `glide`: they take each changed pixel straight to its new grey without flashing. `live` (experimental): each update is a tick towards the latest frame, for things that move. Needs `grey: true` |
+| `grey_partials` | `false` | Also `true`: partials redraw the window around what changed in greys, flashing only it |
 | `fast_greys` | `false` | Grey refreshes in two shakes and a push: about 2 s rather than 3.7 or 3.95; needs `grey: true` |
 | `temperature_sensor` | none | Used instead of the panel's own sensor, which the driver reads anyway |
 | `busy_pin` | `GPIO48`, inverted | The UC8276C holds BUSY low while it works |
@@ -357,9 +371,12 @@ buttons. Each refresh's time shows on the panel a moment after it lands.
 - [examples/demo-579.yaml](examples/demo-579.yaml): the dial counts with fast partials, the press
   swaps four and seven greys, MENU runs a grey refresh, EXIT sleeps for 10 s.
 - [examples/demo-42.yaml](examples/demo-42.yaml): prev and next count; OK cycles how, between
-  fast partials that settle into greys 3 s after the last press, grey partials every time, and
-  fast partials alone; Home swaps four and seven greys, Exit sleeps for 10 s; fast greys
-  throughout, and the panel's own temperature in the corner.
+  glides, fast partials that settle into greys 3 s after the last press, grey partials every
+  time, and fast partials alone; Home swaps four and seven greys, Exit sleeps for 10 s; fast
+  greys throughout, and the panel's own temperature in the corner.
+- [examples/live-42.yaml](examples/live-42.yaml) and [examples/live-579.yaml](examples/live-579.yaml):
+  live mode, with nothing asking for updates after the first: a clock, a bouncing ball and, on
+  the 5.79", a scrolling ticker, with the ticks a second each panel manages.
 
 ## Test card
 
@@ -398,6 +415,9 @@ sides of the seam.
   full refresh on the next wake.
 - **CrowPanel 4.2".** V1.0 boards (SSD1683) are not supported, and its frame rate by
   temperature borrows the 5.79" panel's maker's curve until checked in a warm room.
+- **Glides and live ticks** land near enough, not exactly, until the next grey refresh settles
+  them; on the 5.79" that is the next full refresh, and its tuning is the 4.2"'s scaled, not yet
+  measured on its own panel. They need PSRAM: about 330 KB on the 4.2" and 610 KB on the 5.79".
 
 ## Prior art
 

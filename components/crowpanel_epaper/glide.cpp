@@ -247,14 +247,19 @@ void CROWPANEL_FAST CrowPanelBase::record_drive_(Pass last) {
   ESP_LOGV(TAG, "%u pixels driven", (unsigned) this->driven_count_);
 }
 
-// A glide or a tick drew the window's rows near enough: the next starts from them, and the next
-// grey refresh that settles must cover them.
+// A glide drew the window's rows near enough: the next starts from them, and the next grey
+// refresh that settles must cover them.
 void CROWPANEL_FAST CrowPanelBase::drew_window_() {
-  const Window &w = this->window_;
+  this->drew_(this->window_);
+  merge(this->dirty_, this->window_);
+}
+
+// The frame's levels in the rows that changed are the ones drawn from now on.
+void CROWPANEL_FAST CrowPanelBase::drew_(const Window &changed) {
   const size_t row = this->row_width_;
-  memcpy(this->shown_ + w.first_row * row, this->pixels_ + w.first_row * row, (w.last_row + 1 - w.first_row) * row);
-  this->rows_drawn_(w.first_row, w.last_row);
-  merge(this->dirty_, w);
+  memcpy(this->shown_ + changed.first_row * row, this->pixels_ + changed.first_row * row,
+         (changed.last_row + 1 - changed.first_row) * row);
+  this->rows_drawn_(changed.first_row, changed.last_row);
 }
 
 // The model starts from the levels last drawn.
@@ -382,17 +387,64 @@ int HOT CROWPANEL_FAST CrowPanelBase::compute_tick_() {
     this->build_tick_tables_();
   if (!this->estimate_valid_)
     this->estimate_levels_();
-  Window window = this->moving_;
-  if (this->find_changed_window_())
-    merge(window, this->window_);
+  Window window = this->moving_, changed = EMPTY_WINDOW;
+  if (this->find_changed_window_()) {
+    changed = this->window_;
+    merge(window, changed);
+  }
   this->moving_ = EMPTY_WINDOW;
   if (is_empty(window))
     return 0;
   this->window_ = window;
   this->clear_masks_();
+  // Half the rows on the other core, half here; they share nothing but tables neither writes.
+  if (this->helper_ == nullptr) {
+    this->helper_start_ = xSemaphoreCreateBinary();
+    this->helper_done_ = xSemaphoreCreateBinary();
+    if (this->helper_start_ != nullptr && this->helper_done_ != nullptr)
+      xTaskCreatePinnedToCore(tick_helper_, "crowpanel", 4096, this, 5, &this->helper_, 1 - xPortGetCoreID());
+  }
+  const uint16_t mid = (window.first_row + window.last_row + 1) / 2;
+  TickRows top{window.first_row, mid, EMPTY_WINDOW, 0, 0, 0, 0};
+  TickRows bottom{mid, static_cast<uint16_t>(window.last_row + 1), EMPTY_WINDOW, 0, 0, 0, 0};
+  if (this->helper_ != nullptr && window.last_row - window.first_row >= 8) {
+    this->helper_rows_ = bottom;
+    this->helper_window_ = &window;
+    xSemaphoreGive(this->helper_start_);
+    this->tick_rows_(top, window);
+    xSemaphoreTake(this->helper_done_, portMAX_DELAY);
+    bottom = this->helper_rows_;
+  } else {
+    this->tick_rows_(top, window);
+    this->tick_rows_(bottom, window);
+  }
+  merge(this->moving_, top.moving);
+  merge(this->moving_, bottom.moving);
+  this->driven_count_ += top.driven + bottom.driven;
+  const uint32_t blacks = top.blacks + bottom.blacks, whites = top.whites + bottom.whites,
+                 held = top.held + bottom.held;
+  this->masked_ = window;
+  // Where the frame changed, its reading and levels are the ones drawn from now on, whether or not
+  // anything moved; the window, pushed near enough, is for the next settle to cover.
+  if (!is_empty(changed)) {
+    this->record_glass_rows_(changed.first_row, changed.last_row + 1, false, false);
+    this->drew_(changed);
+  }
+  merge(this->dirty_, window);
+  if (blacks + whites == 0)
+    return 0;
+  ESP_LOGV(TAG, "Tick of x %u to %u, y %u to %u: %u black, %u white, %u held at their limit",
+           (unsigned) window.first_bank * 8, (unsigned) window.last_bank * 8 + 7, (unsigned) window.first_row,
+           (unsigned) window.last_row, (unsigned) blacks, (unsigned) whites, (unsigned) held);
+  return 1;
+}
+
+// A tick's pass over some of its window's rows: each pixel pushed a tick towards its level or held,
+// eight that have arrived and whose levels have not changed skipped whole, the masks built and the
+// model and the drive record moved on.
+void HOT CROWPANEL_FAST CrowPanelBase::tick_rows_(TickRows &rows, const Window &window) {
   uint8_t *old_plane = this->masks_, *new_plane = this->masks_ + this->bit_plane_;
-  uint32_t blacks = 0, whites = 0, held = 0;
-  for (size_t y = window.first_row; y <= window.last_row; y++) {
+  for (size_t y = rows.first; y != rows.end; y++) {
     for (size_t bank = window.first_bank; bank <= window.last_bank; bank++) {
       uint8_t &moving = this->moving_banks_[y * this->plane_row_ + bank];
       const size_t pair = y * this->row_width_ + bank * 4;
@@ -411,42 +463,41 @@ int HOT CROWPANEL_FAST CrowPanelBase::compute_tick_() {
         if (push == 0)
           continue;
         if (std::abs(drive + push * TICK) > MAX_DRIVE) {
-          held++;
+          rows.held++;
           continue;
         }
         if (push > 0) {
           new_bits &= ~(0x80 >> j);
           now = this->tick_black_[now];
-          blacks++;
+          rows.blacks++;
         } else {
           old_bits &= ~(0x80 >> j);
           now = this->tick_white_[now];
-          whites++;
+          rows.whites++;
         }
-        this->driven_count_ -= drive != 0;
+        rows.driven -= drive != 0;
         drive += push * TICK;
-        this->driven_count_ += drive != 0;
+        rows.driven += drive != 0;
         const int next = this->decide_(now, to, drive);
         if (next != 0 && std::abs(drive + next * TICK) <= MAX_DRIVE)
           moving = 1;
       }
       if (moving)
-        merge(this->moving_, {static_cast<uint8_t>(bank), static_cast<uint8_t>(bank), static_cast<uint16_t>(y),
+        merge(rows.moving, {static_cast<uint8_t>(bank), static_cast<uint8_t>(bank), static_cast<uint16_t>(y),
                               static_cast<uint16_t>(y)});
       old_plane[y * this->plane_row_ + bank] = old_bits;
       new_plane[y * this->plane_row_ + bank] = new_bits;
     }
   }
-  this->masked_ = window;
-  // The window's reading and levels are this frame's from now on, whether or not anything moved.
-  this->record_glass_rows_(window.first_row, window.last_row + 1, false, false);
-  this->drew_window_();
-  if (blacks + whites == 0)
-    return 0;
-  ESP_LOGV(TAG, "Tick of x %u to %u, y %u to %u: %u black, %u white, %u held at their limit",
-           (unsigned) window.first_bank * 8, (unsigned) window.last_bank * 8 + 7, (unsigned) window.first_row,
-           (unsigned) window.last_row, (unsigned) blacks, (unsigned) whites, (unsigned) held);
-  return 1;
+}
+
+void CrowPanelBase::tick_helper_(void *panel) {
+  auto *self = static_cast<CrowPanelBase *>(panel);
+  for (;;) {
+    xSemaphoreTake(self->helper_start_, portMAX_DELAY);
+    self->tick_rows_(self->helper_rows_, *self->helper_window_);
+    xSemaphoreGive(self->helper_done_);
+  }
 }
 
 // While this tick's refresh runs, the next frame is drawn and its tick planned, so the next only

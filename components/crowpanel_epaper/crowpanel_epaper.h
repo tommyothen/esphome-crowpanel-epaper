@@ -1,5 +1,9 @@
 #pragma once
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
+
 #include "esphome/components/epaper_spi/epaper_spi.h"
 #include "esphome/core/defines.h"
 #ifdef USE_SENSOR
@@ -213,6 +217,7 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   void build_masks_(Pass pass, uint8_t frames);
   void record_drive_(Pass last);
   void drew_window_();
+  void drew_(const Window &changed);
   void estimate_levels_();
   void build_tick_tables_();
   int decide_(uint8_t now, uint8_t to, int drive) const;
@@ -221,6 +226,16 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   // Called by a driver at the end of an update: whether ticking goes on, and if so arranges it.
   bool continue_live_();
   void settle_glides_now_();
+  // What a tick's pass over rows first to end of its window found.
+  struct TickRows {
+    uint16_t first, end;
+    Window moving;
+    uint32_t blacks, whites, held;
+    int32_t driven;  // the change in the count of pixels with drive
+  };
+  void tick_rows_(TickRows &rows, const Window &window);
+  // A task on the other core that takes half of each tick's rows.
+  static void tick_helper_(void *panel);
 
   const size_t plane_row_;  // a RAM plane's row: 8 pixels a byte
   const size_t bit_plane_;  // a bit a pixel
@@ -288,6 +303,10 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   uint8_t tick_black_[256]{}, tick_white_[256]{};
   int8_t tick_push_[7][256]{};
   HighFrequencyLoopRequester fast_loop_;  // the main loop unpaced while ticking
+  TaskHandle_t helper_{nullptr};
+  SemaphoreHandle_t helper_start_{nullptr}, helper_done_{nullptr};
+  TickRows helper_rows_{};
+  const Window *helper_window_{nullptr};
   uint32_t last_colour_{UINT32_MAX};  // draw_pixel_at's last colour and its level: white, all ones
   uint8_t last_level_{6};
   uint32_t started_{0};  // when the update running began

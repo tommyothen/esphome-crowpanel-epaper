@@ -134,9 +134,27 @@ void CrowPanelBase::fill(Color color) {
   this->y_high_ = this->height_;
 }
 
+// The base's rotate_coordinates_ inline: clipping, the rotation, the panel's bounds; and the
+// drawn region, which only says something was drawn, grown to the whole panel once.
 void HOT CROWPANEL_FAST CrowPanelBase::draw_pixel_at(int x, int y, Color color) {
-  if (!this->rotate_coordinates_(x, y))
+  if (this->is_point_clipped(x, y))
     return;
+  const uint8_t transform = this->effective_transform_;
+  if (transform & epaper_spi::SWAP_XY)
+    std::swap(x, y);
+  if (transform & epaper_spi::MIRROR_X)
+    x = this->width_ - x - 1;
+  if (transform & epaper_spi::MIRROR_Y)
+    y = this->height_ - y - 1;
+  if (static_cast<unsigned>(x) >= static_cast<unsigned>(this->width_) ||
+      static_cast<unsigned>(y) >= static_cast<unsigned>(this->height_))
+    return;
+  if (this->x_high_ == 0) {
+    this->x_low_ = 0;
+    this->y_low_ = 0;
+    this->x_high_ = this->width_;
+    this->y_high_ = this->height_;
+  }
   // A rectangle or a run of text is one colour, so its level is worked out once.
   if (color.raw_32 != this->last_colour_) {
     this->last_colour_ = color.raw_32;

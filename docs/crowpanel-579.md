@@ -171,3 +171,23 @@ Each frame is about 20 ms. None of them left a ghost of the frame before.
   own length. One length for every band crosses the levels over.
 - A faster grey: shortening group 2 and nudging its phases to win the greys
   back.
+
+## Glides and live ticks
+
+- **How fast the controllers go.** Timed with BUSY on SPI at 20 MHz, supplies on: a refresh
+  costs 10.3 ms beyond its frames at 0x08, the fastest frame rate, 5.1 ms each (15.4 ms for
+  one frame). Byte 224's codes 0x00 to 0x08 run at about 15, 25, 49, 74, 99, 124, 148, 173 and
+  195 Hz, and 0x09 to 0x0F at 37, 62, 86, 111, 135, 161 and 186. The overhead is about two
+  frames at any rate. All four planes (both controllers, OLD and NEW) take 22.8 ms; 40 rows of
+  them 4.3 ms.
+- **No partial window.** The SSD1683 refreshes every pixel, so a scan sends the rows its masks
+  are in, and gives the rows earlier scans left masks in the glass's reading back, in both
+  planes, which holds them (WW and BB drive nothing). Writing both planes before every scan
+  also keeps the RAM ping-pong out of it.
+- **Tuning.** Not yet measured on this panel: the 4.2"'s glide table and tick curves with a
+  quarter more frames, since its fast partial needs 15 frames at 50 Hz where the 4.2"'s needs
+  12. A glide over the whole panel took 1.14 s and a 200 x 80 box about 0.5 s; a full refresh
+  after it cancelled all 184,644 pixels' drive first. The live demo, a clock, a ball and a
+  ticker scrolling the whole width, runs at about 11 ticks a second: drawing its frame takes
+  31 ms, planning the tick 32 (its per-pixel loop split over both cores), sending 21.
+

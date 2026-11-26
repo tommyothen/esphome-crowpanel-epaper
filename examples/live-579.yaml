@@ -1,0 +1,83 @@
+# Live mode on the 5.79", no network: a clock counting the seconds since boot, a ball bouncing,
+# a ticker scrolling along the bottom, and how many ticks a second the panel is managing. In live
+# mode the driver draws the next frame while the panel shows the last, and goes on by itself while
+# the picture changes, so nothing here asks for updates after the first.
+esphome:
+  name: crowpanel-live-579
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: id(epd).request_full_update();
+        - component.update: epd
+        - wait_until:
+            condition:
+              not:
+                epaper_spi.is_updating: epd
+        - component.update: epd
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+  hardware_uart: UART0
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [crowpanel_579, crowpanel_epaper]
+
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+
+font:
+  - { file: "gfonts://Inter@700", id: f_clock, size: 96, bpp: 2, glyphs: ["0123456789:"] }
+  - { file: "gfonts://Inter@600", id: f_text, size: 22, bpp: 2, glyphsets: [GF_Latin_Core] }
+  - { file: "gfonts://Inter@500", id: f_small, size: 14, bpp: 2, glyphsets: [GF_Latin_Core] }
+
+display:
+  - platform: crowpanel_579
+    id: epd
+    grey: true
+    grey_partials: live
+    full_update_every: 255
+    lambda: |-
+      const uint32_t now = millis();
+      static uint32_t last = 0;
+      static float rate = 0;
+      if (last != 0 && now > last)
+        rate = rate * 0.9f + 100.0f / (now - last);
+      last = now;
+      const int w = it.get_width(), h = it.get_height();
+      it.fill(Color::WHITE);
+      const uint32_t s = now / 1000;
+      it.printf(150, 100, id(f_clock), Color::BLACK, TextAlign::CENTER, "%02u:%02u", (unsigned) (s / 60 % 60),
+                (unsigned) (s % 60));
+      it.printf(150, 180, id(f_small), Color::BLACK, TextAlign::CENTER, "Live: %.0f ticks a second", rate);
+      // A ball bouncing in the right of the panel.
+      auto bounce = [](float p, float span) {
+        const float m = fmodf(p, 2 * span);
+        return m < span ? m : 2 * span - m;
+      };
+      const float t = now / 1000.0f;
+      const int r = 26, left = 330, right = w - 12, top = 12, bottom = h - 60;
+      it.rectangle(left - r - 4, top, right - left + 2 * r + 8, bottom - top, Color::BLACK);
+      it.filled_circle(left + bounce(t * 120, right - left - 2 * r), top + r + 4 + bounce(t * 80, bottom - top - 2 * r - 8),
+                       r, Color(85, 85, 85));
+      // A ticker along the bottom.
+      static const char *const TICKER = "Bins out tonight   ·   Rain from 15:00   ·   Dinner at 19:00   ·   ";
+      int x1, y1, tw, th;
+      it.get_text_bounds(0, 0, TICKER, id(f_text), TextAlign::TOP_LEFT, &x1, &y1, &tw, &th);
+      const int offset = static_cast<int>(t * 40) % tw;  // 40 px a second: the ink keeps up
+      it.filled_rectangle(0, h - 44, w, 44, Color::BLACK);
+      for (int x = -offset; x < w; x += tw)
+        it.print(x, h - 22, id(f_text), Color::WHITE, TextAlign::CENTER_LEFT, TICKER);
