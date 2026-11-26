@@ -10,6 +10,13 @@ HMI boards. Tested with ESPHome 2026.10.
 | CrowPanel 5.79" | 792x272 | `crowpanel_579` | Ready |
 | CrowPanel 4.2" V1.2 (UC8276C) | 400x300 | `crowpanel_42` | Ready |
 
+Both build on `crowpanel_epaper`, which holds what they share: the buffer and its
+levels, the planes made from it, the record of what the glass shows and of which
+pixels a fast partial left out of balance, and the update's passes. Each board's
+component holds only its controllers and their waveforms. List `crowpanel_epaper`
+alongside the board's component under `external_components`, or leave
+`components:` out to make every component available.
+
 ## CrowPanel 5.79"
 
 `crowpanel_579` drives the 5.79" panel, which uses two SSD1683 controllers in
@@ -113,7 +120,7 @@ into the bootloader automatically, so flashing needs no BOOT button. For the
 ```yaml
 external_components:
   - source: github://tommyothen/crowpanel-epaper@ef63230351732ede18330e7396e47458151d17cc  # a full commit SHA or a tag
-    components: [crowpanel_579]
+    components: [crowpanel_579, crowpanel_epaper]
 
 esp32:
   variant: esp32s3

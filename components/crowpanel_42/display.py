@@ -14,7 +14,7 @@ board's wiring is fixed, so every pin defaults to it and the YAML only says how 
 from esphome import pins
 import esphome.codegen as cg
 from esphome.components import display, sensor, spi
-from esphome.components.epaper_spi.display import EPaperBase
+from esphome.components.crowpanel_epaper import CrowPanelBase
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_BUSY_PIN,
@@ -29,7 +29,7 @@ from esphome.const import (
 )
 
 # epaper_spi supplies the base class; its own platform is not used.
-AUTO_LOAD = ["epaper_spi", "split_buffer"]
+AUTO_LOAD = ["crowpanel_epaper", "epaper_spi", "split_buffer"]
 DEPENDENCIES = ["spi"]
 
 CONF_GREY = "grey"
@@ -40,7 +40,7 @@ CONF_POWER_PIN = "power_pin"
 CONF_TEMPERATURE_SENSOR = "temperature_sensor"
 
 crowpanel_42_ns = cg.esphome_ns.namespace("crowpanel_42")
-CrowPanel42 = crowpanel_42_ns.class_("CrowPanel42", EPaperBase)
+CrowPanel42 = crowpanel_42_ns.class_("CrowPanel42", CrowPanelBase)
 
 
 def _needs_grey(config):

@@ -14,7 +14,7 @@ how to draw:
 from esphome import pins
 import esphome.codegen as cg
 from esphome.components import display, sensor, spi
-from esphome.components.epaper_spi.display import EPaperBase
+from esphome.components.crowpanel_epaper import CrowPanelBase
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_BUSY_PIN,
@@ -29,7 +29,7 @@ from esphome.const import (
 )
 
 # epaper_spi supplies the base class; its own platform is not used.
-AUTO_LOAD = ["epaper_spi", "split_buffer"]
+AUTO_LOAD = ["crowpanel_epaper", "epaper_spi", "split_buffer"]
 DEPENDENCIES = ["spi"]
 
 CONF_GREY = "grey"
@@ -38,7 +38,7 @@ CONF_POWER_PIN = "power_pin"
 CONF_TEMPERATURE_SENSOR = "temperature_sensor"
 
 crowpanel_579_ns = cg.esphome_ns.namespace("crowpanel_579")
-CrowPanel579 = crowpanel_579_ns.class_("CrowPanel579", EPaperBase)
+CrowPanel579 = crowpanel_579_ns.class_("CrowPanel579", CrowPanelBase)
 
 
 def _seven_needs_grey(config):

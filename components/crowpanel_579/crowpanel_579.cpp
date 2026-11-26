@@ -14,22 +14,18 @@
 
 namespace esphome::crowpanel_579 {
 
+
 static const char *const TAG = "crowpanel_579";
 
 // OR'd into a command to address the left controller instead of the right.
 static constexpr uint8_t LEFT = 0x80;
 static constexpr uint8_t LAST_X = 0x31;  // the 50th byte of a controller's RAM row
-// How long one loop() call may run the update's steps back to back, well inside ESPHome's 50 ms.
-static constexpr uint32_t STEP_BUDGET_MS = 25;
 // The supplies stay on until ACTIVE_MS passes without an update, or for at most MAX_ACTIVE_MS at a
 // stretch however often updates come; then they go off, and after CONTROLLER_IDLE_MS more the
 // controllers sleep, so an update in between skips their reset.
 static constexpr uint32_t ACTIVE_MS = 5000;
 static constexpr uint32_t MAX_ACTIVE_MS = 60000;
 static constexpr uint32_t CONTROLLER_IDLE_MS = 10000;
-// An update the panel has not finished in this long has failed: a seven-grey refresh with its
-// cancelling pass takes about 5 s.
-static constexpr uint32_t UPDATE_DEADLINE_MS = 20000;
 
 // Display update control (0x22) sequences. The full one switches the supplies on, reads the
 // panel's temperature sensor, loads the matching OTP waveform, runs it and switches them off. The
@@ -312,155 +308,9 @@ static_assert(same_timing(ONE_WAY.bytes) && same_timing(CORRECTION.bytes) && sam
               "every table of a waveform must run to VCOM's timing");
 
 
-// For each RAM bit a refresh needs, the levels (0 to 6) that set it, and from that a table from a
-// buffer byte, two pixels with the first in the high nibble, to their two bits.
-static constexpr uint8_t WHITE = 0b1110000;      // levels 4 to 6: a partial's reading, and the grey's high bit
-// The middle pass makes levels 0, 1, 4 and 6 directly (black, dark grey, light grey, white) and
-// levels 2, 3 and 5 as dark, dark and light grey before their half steps; with four greys only
-// the even levels are drawn, and level 2 is dark grey.
-static constexpr uint8_t GREY_LOW = 0b1001110;   // levels 1, 2, 3 and 6: dark grey or white
-static constexpr uint8_t HALF_HIGH = 0b0101000;  // levels 3 and 5: the half step's high bit
-static constexpr uint8_t HALF_LOW = 0b1100100;   // levels 2, 5 and 6: the half step's low bit
-struct PlaneBits {
-  uint8_t table[256];
-  constexpr PlaneBits(uint8_t levels) : table() {
-    for (int v = 0; v < 256; v++)
-      table[v] = (((levels >> (v >> 4)) & 1) << 1) | ((levels >> (v & 0x0F)) & 1);
-  }
-};
-static constexpr PlaneBits WHITE_BITS{WHITE}, GREY_LOW_BITS{GREY_LOW}, HALF_HIGH_BITS{HALF_HIGH},
-    HALF_LOW_BITS{HALF_LOW};
-static constexpr CrowPanel579::Source WHITE_SOURCE{WHITE_BITS.table, nullptr};
-
-// Where the last update left the full_update_every count, kept through deep sleep so the count
-// carries on across wakes. Only read on a wake from deep sleep, so it is always one this
-// driver wrote.
-static RTC_DATA_ATTR uint8_t slept_update_count;
-// A hash of each row's black and white reading as the glass shows it, so a partial refresh sends
-// only the rows that changed, and nothing at all when none did. Kept through deep sleep, and only
-// trusted when glass_rows_valid says the last update finished.
-static RTC_DATA_ATTR uint32_t glass_rows[CrowPanel579::HEIGHT];
-static RTC_DATA_ATTR bool glass_rows_valid;
-
-static void hold(InternalGPIOPin *pin, bool on) {
-  if (pin == nullptr)
-    return;
-  const auto num = static_cast<gpio_num_t>(pin->get_pin());
-  if (on) {
-    gpio_hold_en(num);
-  } else {
-    gpio_hold_dis(num);
-  }
-}
-
-void CrowPanel579::setup() {
-  // The pins are already high if a deep sleep held them; set them up before letting go.
-  EPaperBase::setup();
-  hold(this->power_pin_, false);
-  hold(this->hold_reset_pin_, false);
-  if (this->is_failed())
-    return;
-  // With PSRAM the buffer is one block, and drawing indexes it directly.
-  size_t length = 0;
-  uint8_t *pixels = this->buffer_.get_span(0, length);
-  this->pixels_ = length == this->buffer_length_ ? pixels : nullptr;
-  // What the glass shows and which pixels are out of balance, a bit a pixel each. Without them
-  // there are no fast partials.
-  RAMAllocator<uint8_t> allocator;
-  this->glass_ = allocator.allocate(2 * BIT_PLANE);
-  if (this->glass_ != nullptr) {
-    this->unsettled_ = this->glass_ + BIT_PLANE;
-    memset(this->unsettled_, 0, BIT_PLANE);
-  }
-  // Waking from deep sleep, the panel kept its power, its picture and its RAM, so the count
-  // carries on and the first update can be partial. Anything else starts from nothing.
-  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) {
-    glass_rows_valid = false;
-    // A reboot part way through, a crash or an update over the air, can leave the controllers
-    // with their supplies on. Reset them and put them to sleep until the first update.
-    this->reset_controllers_();
-  }
-  if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_UNDEFINED && this->is_using_partial_update_()) {
-    this->update_count_ = slept_update_count % this->full_update_every_;
-    ESP_LOGD(TAG, "Woke from deep sleep; the panel still holds its frame (update %u of %u)",
-             (unsigned) this->update_count_, (unsigned) this->full_update_every_);
-  }
-}
-
-// Before a deep sleep: finish writing the planes if a refresh has just run, cancel any fast
-// partials' pushes, then sleep the controllers and hold the panel's power and reset pins high so
-// it keeps its RAM.
-void CrowPanel579::on_safe_shutdown() {
-  this->cancel_timeout("idle");
-  this->cancel_timeout("sleep");
-  while (this->copying_ && !this->send_planes_(WHITE_SOURCE, WHITE_SOURCE)) {
-  }
-  this->copying_ = false;
-  using epaper_spi::EPaperState;
-  const bool settled =
-      !this->next_pass_ && (this->state_ == EPaperState::IDLE || this->state_ == EPaperState::DEEP_SLEEP);
-  if (this->unsettled_count_ != 0) {
-    if (settled) {
-      this->settle_now_();
-    } else {
-      ESP_LOGW(TAG, "Sleeping part way through an update; %u pixels stay a push out of balance",
-               (unsigned) this->unsettled_count_);
-    }
-  }
-  // An update cut short, a seven-grey one between passes included, may leave the panel's RAM out
-  // of step with the glass, so the next wake starts with a full refresh.
-  slept_update_count = settled ? this->update_count_ : 0;
-  glass_rows_valid = glass_rows_valid && settled;
-  this->sleep_controllers_();
-  hold(this->power_pin_, true);
-  hold(this->hold_reset_pin_, true);
-  gpio_deep_sleep_hold_en();
-}
-
-// Four greys use the even levels, in even steps of luma so anti-aliased text, which blends at
-// 0, 85, 170 and 255, keeps all four. Seven use every level.
-uint8_t CrowPanel579::level_(Color color) const {
-  const uint8_t luma = epaper_spi::rec601_luma(color);
-  return this->seven_ ? luma * 7 / 256 : (luma >> 6) * 2;
-}
-
-void CrowPanel579::fill(Color color) {
-  if (this->get_clipping().is_set()) {
-    display::Display::fill(color);  // the clipped rectangle, a pixel at a time
-    return;
-  }
-  const uint8_t level = this->level_(color);
-  this->buffer_.fill(level << 4 | level);
-  this->x_low_ = 0;
-  this->y_low_ = 0;
-  this->x_high_ = this->width_;
-  this->y_high_ = this->height_;
-}
-
-void HOT CrowPanel579::draw_pixel_at(int x, int y, Color color) {
-  if (!this->rotate_coordinates_(x, y))
-    return;
-  // A rectangle or a run of text is one colour, so its level is worked out once.
-  if (color.raw_32 != this->last_colour_) {
-    this->last_colour_ = color.raw_32;
-    this->last_level_ = this->level_(color);
-  }
-  const size_t index = y * this->row_width_ + x / 2;
-  uint8_t &pair = this->pixels_ != nullptr ? this->pixels_[index] : this->buffer_[index];
-  const uint8_t level = this->last_level_;
-  pair = (x & 1) ? (pair & 0xF0) | level : (pair & 0x0F) | level << 4;  // the first pixel in the high nibble
-}
-
-// The deadline runs from here. The wind-down is cancelled once the update starts, since an update
-// the lambda draws nothing for never does and would leave nothing to set it again.
-void CrowPanel579::update() {
-  if (this->state_ == epaper_spi::EPaperState::IDLE)
-    this->started_ = millis();
-  EPaperBase::update();
-}
-
 // Controllers still awake from the last update need no reset or initialisation: every refresh
 // loads its own waveform and settings, and every plane it reads is written for it.
+// The wind-down stops here, once an update has started.
 bool CrowPanel579::reset() {
   this->cancel_timeout("idle");
   this->cancel_timeout("sleep");
@@ -507,25 +357,17 @@ void CrowPanel579::set_ram_area_(bool left, uint16_t first_y, uint16_t end_y) {
   this->cmd_data(0x4F | to, {static_cast<uint8_t>(first_y & 0xFF), static_cast<uint8_t>(first_y >> 8)});
 }
 
-// Plane bytes offset to offset + count of row y: from the buffer through a table, or from a bit
-// plane as they are. Plane byte j holds pixels 8j to 8j + 7, the first in the top bit.
-void HOT CrowPanel579::plane_bytes_(const Source &source, size_t y, size_t offset, size_t count, uint8_t *out) {
-  if (source.plane != nullptr) {
-    memcpy(out, source.plane + y * PLANE_ROW + offset, count);
-    return;
+// A partial sends only 0x24, the new frame, and only the rows that changed: 0x26, and 0x24 everywhere
+// else, already hold what is on the glass. Cancelling and settling send the rows with a pixel out of
+// balance. Every other pass sends both planes whole.
+void CrowPanel579::start_pass_(Pass pass) {
+  if (pass == Pass::CORRECT) {
+    this->find_unsettled_rows_();
+  } else if (pass != Pass::FAST && pass != Pass::PARTIAL) {
+    this->first_row_ = 0;
+    this->end_row_ = HEIGHT;
   }
-  // Plane byte offset + i holds the 8 pixels of buffer bytes 4 (offset + i) to the third after.
-  const size_t start = y * this->row_width_ + 4 * offset;
-  uint8_t copy[4 * PLANE_ROW];
-  const uint8_t *in = this->pixels_ + start;
-  if (this->pixels_ == nullptr) {
-    for (size_t i = 0; i != 4 * count; i++)
-      copy[i] = this->buffer_[start + i];
-    in = copy;
-  }
-  const uint8_t *bits = source.table;
-  for (size_t i = 0; i != count; i++, in += 4)
-    out[i] = bits[in[0]] << 6 | bits[in[1]] << 4 | bits[in[2]] << 2 | bits[in[3]];
+  this->plane_ = pass == Pass::FAST || pass == Pass::PARTIAL ? 2 : 0;
 }
 
 // Sends planes plane_ to 3 for rows first_row_ to end_row_, a 10 ms slice at a time: 0x26 then
@@ -565,52 +407,6 @@ bool HOT CrowPanel579::send_planes_(const Source &old_source, const Source &new_
   return true;
 }
 
-// FNV-1a over a row's black and white reading.
-static uint32_t row_hash(const uint8_t *row) {
-  uint32_t hash = 2166136261u;
-  for (size_t i = 0; i != CrowPanel579::PLANE_ROW; i++)
-    hash = (hash ^ row[i]) * 16777619u;
-  return hash;
-}
-
-// The rows of the new frame whose black and white reading differs from the glass's, as one band.
-// Returns false when there are none.
-bool CrowPanel579::find_changed_rows_() {
-  int first = -1, last = -1;
-  uint8_t row[PLANE_ROW];
-  for (size_t y = 0; y != HEIGHT; y++) {
-    this->plane_bytes_(WHITE_SOURCE, y, 0, PLANE_ROW, row);
-    if (!glass_rows_valid || row_hash(row) != glass_rows[y]) {
-      if (first < 0)
-        first = y;
-      last = y;
-    }
-  }
-  if (first < 0)
-    return false;
-  this->first_row_ = first;
-  this->end_row_ = last + 1;
-  return true;
-}
-
-// The band of rows holding a pixel out of balance.
-void CrowPanel579::find_unsettled_rows_() {
-  int first = -1, last = -1;
-  for (size_t y = 0; y != HEIGHT; y++) {
-    const uint8_t *row = this->unsettled_ + y * PLANE_ROW;
-    for (size_t i = 0; i != PLANE_ROW; i++) {
-      if (row[i] != 0) {
-        if (first < 0)
-          first = y;
-        last = y;
-        break;
-      }
-    }
-  }
-  this->first_row_ = first < 0 ? 0 : first;
-  this->end_row_ = first < 0 ? 1 : last + 1;
-}
-
 // Particles move faster in the warm and slower in the cold, so the self-balanced waveforms run at
 // a frame rate for the temperature, which stretches or shrinks every frame alike and leaves their
 // balance as it is. The bands and ratios are the panel maker's: with 0x1A faking the temperature,
@@ -644,75 +440,6 @@ int CrowPanel579::band_() const {
     default:
       return 1;
   }
-}
-
-// Decides what an update is, at its first transfer: a partial refresh when the count says so, fast
-// whenever the driver knows what the glass shows, or a full refresh, after cancelling any fast
-// partials' pushes. A partial whose rows are all unchanged has nothing to send or refresh.
-void CrowPanel579::plan_update_() {
-  this->pass_count_ = 0;
-  this->unchanged_ = false;
-  this->frame_rate_ = this->frame_rate_for_temperature_();
-  if (this->update_count_ != 0) {
-    if (!this->find_changed_rows_()) {
-      this->unchanged_ = true;
-      return;
-    }
-    const bool fast = this->glass_valid_;
-    this->passes_[this->pass_count_++] = fast ? Pass::FAST : Pass::PARTIAL;
-    ESP_LOGV(TAG, "%s refresh of rows %u to %u", fast ? "Fast partial" : "Partial", (unsigned) this->first_row_,
-             (unsigned) this->end_row_ - 1);
-  } else {
-    if (this->unsettled_count_ != 0)
-      this->passes_[this->pass_count_++] = Pass::CORRECT;
-    if (!this->grey_) {
-      this->passes_[this->pass_count_++] = Pass::BLACK_WHITE;
-    } else if (!this->seven_) {
-      this->passes_[this->pass_count_++] = Pass::GREY;
-    } else {
-      this->passes_[this->pass_count_++] = Pass::HALF_TO_BLACK;
-      this->passes_[this->pass_count_++] = Pass::EVEN_GREY;
-      this->passes_[this->pass_count_++] = Pass::HALF_TO_WHITE;
-    }
-  }
-  glass_rows_valid = false;  // until this update has finished
-}
-
-// Sends the current pass's planes. A partial sends only 0x24, the new frame, and only the rows
-// that changed: 0x26, and 0x24 everywhere else, already hold what is on the glass. Cancelling
-// and settling send which pixels are out of balance (0x26) and what the glass shows (0x24) for the
-// rows that have any. Every other pass sends both planes whole.
-bool CrowPanel579::transfer_data() {
-  if (!this->pass_started_) {
-    if (this->pass_index_ == 0)
-      this->plan_update_();
-    if (this->unchanged_)
-      return true;
-    this->pass_started_ = true;
-    const Pass pass = this->passes_[this->pass_index_];
-    if (pass == Pass::CORRECT) {
-      this->find_unsettled_rows_();
-    } else if (pass != Pass::FAST && pass != Pass::PARTIAL) {
-      this->first_row_ = 0;
-      this->end_row_ = HEIGHT;
-    }
-    this->plane_ = pass == Pass::FAST || pass == Pass::PARTIAL ? 2 : 0;
-  }
-  switch (this->passes_[this->pass_index_]) {
-    case Pass::FAST:
-    case Pass::PARTIAL:
-    case Pass::BLACK_WHITE:
-      return this->send_planes_(WHITE_SOURCE, WHITE_SOURCE);
-    case Pass::GREY:
-    case Pass::EVEN_GREY:
-      return this->send_planes_(WHITE_SOURCE, Source{GREY_LOW_BITS.table, nullptr});
-    case Pass::HALF_TO_BLACK:
-    case Pass::HALF_TO_WHITE:
-      return this->send_planes_(Source{HALF_HIGH_BITS.table, nullptr}, Source{HALF_LOW_BITS.table, nullptr});
-    case Pass::CORRECT:
-      return this->send_planes_(Source{nullptr, this->unsettled_}, Source{nullptr, this->glass_});
-  }
-  return true;
 }
 
 // The loaded waveforms need 0x21's second byte at 0x10, which GxEPD2 calls the cascade bit;
@@ -788,92 +515,6 @@ void CrowPanel579::load_waveform_(const uint8_t *waveform, uint8_t frame_rate) {
   this->supplies_on_ = true;
 }
 
-// Runs once a pass has finished. With passes left, loop() starts the next. After the last, the
-// glass's reading is brought up to date, fast partials' pushes are recorded or cleared, and the
-// reading goes to both planes for the next partial to compare with; the base moves straight on to
-// sleeping the controllers, so loop() writes them first, in slices. Both planes, as GxEPD2's
-// writeImageAgain does, because a refresh with a loaded waveform swaps the banks 0x24 and 0x26
-// address until the next reset (RAM ping-pong, 0x37): with both holding the same frame, the next
-// partial is right with or without a reset in between. The panel's own black and white refresh
-// writes both planes before it and does not swap.
-void CrowPanel579::power_off() {
-  this->pass_started_ = false;
-  if (this->pass_index_ + 1 < this->pass_count_) {
-    this->pass_index_++;
-    this->next_pass_ = true;
-    return;
-  }
-  const Pass last = this->passes_[this->pass_index_];
-  this->pass_index_ = 0;
-  if (this->unchanged_)
-    return;
-  this->record_glass_(last == Pass::FAST, this->passes_[0] == Pass::CORRECT);
-  this->copying_ = last != Pass::BLACK_WHITE;
-}
-
-// The new frame's black and white reading becomes the glass's, row by row: its hash for the next
-// partial, and with the bit planes, which pixels a fast partial has pushed out of balance (each
-// change flips its pixel) or that cancelling has put right.
-void CrowPanel579::record_glass_(bool fast, bool corrected) {
-  uint8_t row[PLANE_ROW];
-  for (size_t y = 0; y != HEIGHT; y++) {
-    this->plane_bytes_(WHITE_SOURCE, y, 0, PLANE_ROW, row);
-    glass_rows[y] = row_hash(row);
-    if (this->glass_ == nullptr)
-      continue;
-    uint8_t *glass = this->glass_ + y * PLANE_ROW;
-    uint8_t *unsettled = this->unsettled_ + y * PLANE_ROW;
-    for (size_t i = 0; i != PLANE_ROW; i++) {
-      if (corrected)
-        unsettled[i] = 0;
-      if (fast)
-        unsettled[i] ^= glass[i] ^ row[i];
-      glass[i] = row[i];
-    }
-  }
-  glass_rows_valid = true;
-  this->glass_valid_ = this->glass_ != nullptr;
-  this->status_clear_warning();
-  this->unsettled_count_ = 0;
-  if (this->glass_ != nullptr) {
-    for (size_t i = 0; i != BIT_PLANE; i++)
-      this->unsettled_count_ += __builtin_popcount(this->unsettled_[i]);
-  }
-  if (this->unsettled_count_ != 0)
-    ESP_LOGV(TAG, "%u pixels a push out of balance", (unsigned) this->unsettled_count_);
-}
-
-// The base runs one step of the update a loop() call, and ESPHome calls loop() about every 16 ms,
-// so the steps run back to back here instead, until one has to wait (BUSY, a delay) or the
-// budget is spent.
-void CrowPanel579::loop() {
-  const uint32_t start = millis();
-  if (this->state_ != epaper_spi::EPaperState::IDLE && start - this->started_ > UPDATE_DEADLINE_MS) {
-    this->give_up_();
-    return;
-  }
-  while (millis() - start < STEP_BUDGET_MS) {
-    if (this->copying_) {
-      if (!this->send_planes_(WHITE_SOURCE, WHITE_SOURCE))
-        continue;
-      this->copying_ = false;
-    }
-    // Each pass is an update to the base, which counts it, so the count goes back a step between
-    // passes and they count as one.
-    if (this->next_pass_ && this->state_ == epaper_spi::EPaperState::DEEP_SLEEP) {
-      this->next_pass_ = false;
-      this->update_count_ = (this->update_count_ + this->full_update_every_ - 1) % this->full_update_every_;
-      this->set_state_(epaper_spi::EPaperState::RESET);
-    }
-    const auto state = this->state_;
-    const auto row = this->row_;
-    const auto plane = this->plane_;
-    EPaperBase::loop();
-    if (this->state_ == state && this->row_ == row && this->plane_ == plane)
-      return;  // waiting
-  }
-}
-
 // The base sleeps the controllers after every update. Here the supplies stay on until ACTIVE_MS
 // passes without another update, so the next one skips switching them on, but no longer than
 // MAX_ACTIVE_MS at a stretch.
@@ -895,29 +536,6 @@ void CrowPanel579::wind_down_() {
     return;
   this->switch_supplies_off_();
   this->set_timeout("sleep", CONTROLLER_IDLE_MS, [this]() { this->sleep_controllers_(); });
-}
-
-// The panel has not finished an update in UPDATE_DEADLINE_MS: a loose ribbon or a failed
-// controller. Stop waiting, reset and sleep the controllers so the supplies are off and the
-// device can sleep, and start again from a full refresh.
-void CrowPanel579::give_up_() {
-  ESP_LOGE(TAG, "The panel did not finish an update in %u s; resetting it", (unsigned) (UPDATE_DEADLINE_MS / 1000));
-  this->status_set_warning();
-  this->reset_controllers_();
-  this->copying_ = false;
-  this->sending_ = false;
-  this->plane_ = 0;
-  this->pass_index_ = 0;
-  this->pass_started_ = false;
-  this->next_pass_ = false;
-  this->init_step_ = 0;
-  this->glass_valid_ = false;
-  glass_rows_valid = false;
-  if (this->unsettled_ != nullptr)
-    memset(this->unsettled_, 0, BIT_PLANE);
-  this->unsettled_count_ = 0;
-  this->update_count_ = 0;
-  this->set_state_(epaper_spi::EPaperState::IDLE);
 }
 
 // A hardware reset, which also switches the supplies off, then deep sleep.
@@ -967,13 +585,6 @@ void CrowPanel579::settle_now_() {
   }
   memset(this->unsettled_, 0, BIT_PLANE);
   this->unsettled_count_ = 0;
-}
-
-void CrowPanel579::wait_idle_(uint32_t timeout_ms) {
-  const uint32_t start = millis();
-  delay(2);  // BUSY rises a moment after the command
-  while (!this->is_idle_() && millis() - start < timeout_ms)
-    delay(1);
 }
 
 // Switches the ±15 V supplies off, without waiting: the next command waits for BUSY anyway.
