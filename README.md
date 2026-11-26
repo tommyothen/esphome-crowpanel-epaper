@@ -31,7 +31,7 @@ Compared with the panel's built-in black and white OTP refreshes:
 | Mode | Time (13 to 20 °C) | Behaviour |
 |---|---|---|
 | Full black and white (`grey: false`) | about 3.7 s | Panel OTP waveform, temperature compensated |
-| Full four greys (`grey: true`) | about 3.9 s | 4 greys, charge balanced; the panel OTP has no grey mode (1.8 s faster than Waveshare's unmodified 4.2" V2 waveform, with the same measured greys) |
+| Full four greys (`grey: true`) | about 4.2 s | 4 greys, charge balanced; the panel OTP has no grey mode (1.8 s faster than Waveshare's unmodified 4.2" V2 waveform, with the same measured greys) |
 | Full seven greys (`grey_levels: 7`) | about 4.4 s | 7 evenly spaced greys in three passes, charge balanced |
 | Partial, first after boot or wake | about 1.3 s | Black and white, charge balanced, changed rows only; greys elsewhere survive (the panel's OTP partial fades them) |
 | Partial, subsequent | 0.4 to 0.5 s | One-way push with per-pixel balance tracking, changed rows only |

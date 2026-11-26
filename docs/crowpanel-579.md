@@ -202,4 +202,17 @@ Each frame is about 20 ms. None of them left a ghost of the frame before.
   its ghosting cleared. Setting 0x21 to 00 10, which loaded waveforms need, before the panel's
   own full refresh turned an all-white RAM into a black panel in the test rig; the driver does
   not set it there.
+- **White ghosting in live mode.** A box taken black and back by ticks, once and three times,
+  then compared with the untouched white beside it, came out 0.014 and 0.047 whiter. A traced
+  pixel showed every cycle balanced, 64 frames of black and 64 of white, so it was the ink: a
+  swing with equal drive leaves a deeper white than the grey refresh draws, deeper each time.
+  Ending each white tick in 2 or 5 frames of black only moved the offset, not the build-up.
+  Three changes fixed most of it. The grey refresh's white went 27 frames deeper (it had been
+  0.018 shallower than the panel's own refresh's white; five crossings then left 0.014, not
+  0.040). Ticks stop black and white at matched depths (13 and 245 of 255 in the model), so the
+  way back pays the drive back and none is left over. And scans and ticks run VCOM at its null,
+  0x28: held for 800 frames, a black half and a white half moved +0.004 and -0.001, as much as
+  they settle on their own, where 0x30 darkened the white 0.004, 0x38 0.012, 0x40 0.032 and
+  0x50 0.14; the untouched white had drifted 0.016 darker over 45 s of ticking and now holds.
+  With all three, one crossing left +0.004 and three +0.017.
 

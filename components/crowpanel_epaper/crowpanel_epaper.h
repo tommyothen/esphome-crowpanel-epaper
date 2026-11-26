@@ -113,6 +113,9 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   struct GlideTuning {
     int8_t glide[7][7];
     uint8_t tick_frames;
+    // How far ticks take black and white, 0 to 255: as far as they go (0 and 255) where both
+    // saturate, else matched depths, so the way back pays the drive back.
+    uint8_t black_stop, white_stop;
     float tick_black[11][2], tick_white[11][2];
   };
 

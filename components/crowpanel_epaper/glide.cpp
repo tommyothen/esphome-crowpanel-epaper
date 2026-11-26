@@ -313,9 +313,9 @@ void CrowPanelBase::build_tick_tables_() {
     for (int now = 0; now < 256; now++) {
       int push = 0;
       if (to == 0) {
-        push = this->tick_black_[now] + 2 < now ? 1 : 0;
+        push = this->tick_black_[now] + 2 < now && now > tuning.black_stop ? 1 : 0;
       } else if (to == 6) {
-        push = this->tick_white_[now] > now + 2 ? -1 : 0;
+        push = this->tick_white_[now] > now + 2 && now < tuning.white_stop ? -1 : 0;
       } else {
         const int target = LEVEL_LIGHT[to], away = std::abs(now - target);
         if (target < now && std::abs(this->tick_black_[now] - target) + 2 < away)
@@ -467,7 +467,8 @@ void HOT CROWPANEL_FAST CrowPanelBase::tick_rows_(TickRows &rows, const Window &
         const int push = this->decide_(now, to, drive);
         if (push == 0)
           continue;
-        if (std::abs(drive + push * this->tick_frames_) > MAX_DRIVE) {
+        const int step = push * this->tick_frames_;
+        if (std::abs(drive + step) > MAX_DRIVE) {
           rows.held++;
           continue;
         }
@@ -481,7 +482,7 @@ void HOT CROWPANEL_FAST CrowPanelBase::tick_rows_(TickRows &rows, const Window &
           rows.whites++;
         }
         rows.driven -= drive != 0;
-        drive += push * this->tick_frames_;
+        drive += step;
         rows.driven += drive != 0;
         const int next = this->decide_(now, to, drive);
         if (next != 0 && std::abs(drive + next * this->tick_frames_) <= MAX_DRIVE)
