@@ -131,6 +131,8 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   bool send_planes_(const Source &old_source, const Source &new_source);
   bool find_changed_rows_();
   bool find_changed_window_();
+  bool find_changed_band_();
+  uint32_t level_row_hash_(size_t y) const;
   bool in_window_(size_t y, size_t bank) const;
   bool unsettled_in_window_() const;
   void plan_update_();

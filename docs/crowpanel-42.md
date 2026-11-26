@@ -43,10 +43,11 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
 - **No copy after a refresh.** The controller never copies NEW to OLD: a partial
   that sends only NEW leaves whatever OLD held. The driver writes the glass's
   reading to both after every update.
-- **The RAM survives a hardware reset and deep sleep (0x07 0xA5).** A rectangle
-  written to OLD came back after either. The driver still keeps the controller in
-  standby through the ESP's deep sleep (about 26 µA against 0.5 µA by the
-  datasheet), since how long the RAM lasts in deep sleep is not documented.
+- **The RAM survives a hardware reset, and standby, but not deep sleep (0x07 0xA5).**
+  A rectangle written to OLD came back after a reset, and after half a second of deep
+  sleep; after 30 minutes of deep sleep OLD read as noise. The datasheet switches the
+  digital supply off in deep sleep. So through the ESP's deep sleep the controller stays
+  in standby, about 26 µA by the datasheet against 0.5 µA, and keeps its RAM.
 - **Voltages.** Elecrow's power setting, 0x01 03 10 3F 3F 03: VGH and VGL ±20 V,
   VSH +15 V and VSL -15 V, the SSD1683's levels.
 - **VCOM belongs at -1.4 V, not Elecrow's -0.6 V.** VCOM_DC (0x82, -0.1 V a step from
@@ -91,6 +92,10 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   (0x92) after each pass. With `grey_partials`, the driver keeps the last frame drawn and
   refreshes, in greys, the window around every pixel whose level changed: a striped box drew
   0.92, 0.71, 0.35 and 0.01 and, removed again, left its area at the background's 0.38 and 0.69.
+  The copy of the last frame lives in PSRAM and is gone after a deep sleep, so the driver also
+  keeps a hash of each row's levels in RTC memory (1.2 KB): after a wake, a grey partial refreshes
+  the band of rows whose levels changed, at full width, and an update that changed nothing drives
+  nothing.
 
 ## Measured
 
@@ -117,6 +122,10 @@ Also checked on the panel:
 - **Deep sleep.** Two fast partials left 1,320 pixels a push out; they settled before the
   sleep, the picture held, and the first update after the wake was a cold partial against the
   controller's RAM (0.98 s), then fast ones again.
+- **Grey partials through a deep sleep.** A counter drawn by grey partials, a 12 s deep sleep,
+  then the next count: a grey refresh of the band of rows the digit touched (x 0 to 399, y 182
+  to 248) from the row record in RTC memory, then exact windows again. The grey ramp above it
+  was never driven.
 - **The watchdog.** With BUSY stuck, an update gives up after 20 s, resets the controller and
   sets the warning; the next update tries again.
 

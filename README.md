@@ -38,8 +38,14 @@ Panel wiring details, waveform notes and measurements are in
 back), whose UC8276C has no waveforms in its OTP: every refresh runs one the
 driver loads. It works as `crowpanel_579` does, with the same options and the
 same fast partials, cancelling and settling, and the pins default to the same
-wiring. It reads the panel's own temperature each time the supplies come on, so it
-needs no `temperature_sensor`; `id(epd).panel_temperature()` returns it in °C. V1.0 boards use an SSD1683 and are not supported yet.
+wiring. V1.0 boards use an SSD1683 and are not supported yet.
+
+- **The panel's own temperature.** The driver reads it each time the supplies come
+  on, so it needs no `temperature_sensor`, and runs its waveforms faster in the
+  warm; `id(epd).panel_temperature()` returns it in °C.
+- **VCOM at its null.** Measured on the panel, at -1.4 V a frame driving nothing
+  leaves the greys as they are. Elecrow's -0.6 V lightened them on every such
+  frame, which also left a DC bias on waveforms that balance by frame count.
 
 | Mode | Time (50 Hz) | Behaviour |
 |---|---|---|
@@ -69,8 +75,10 @@ display:
     grey_partials: true  # partials in greys, flashing only what changed
 ```
 
-A grey partial takes as long as a grey refresh. Without it, partials are the
-fast black and white ones.
+A grey partial takes as long as a grey refresh, and works across deep sleep too:
+the driver keeps a record of each row's greys in RTC memory, so after a wake it
+redraws the band of rows that changed. Without it, partials are the fast black
+and white ones.
 
 Notes and measurements are in [docs/crowpanel-42.md](docs/crowpanel-42.md).
 
