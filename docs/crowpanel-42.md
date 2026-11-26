@@ -102,8 +102,9 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   one rectangle around everything changed, so changes far apart redraw what lies between them
   too, to the same greys. The window and the row hashes are kept through deep sleep, so a fast
   partial before a sleep is settled after the wake to the band of rows it changed (y 192 to 259
-  for a redrawn number). The first partial after a wake runs without the glass's reading, so
-  it grows the window to the whole panel.
+  for a redrawn number). The first partial after a wake runs without the glass's reading, a
+  balanced one, and grows the window by the rows it sent: a number redrawn after a wake, then
+  settled, redrew y 192 to 259 and nothing else.
 - **Fast greys.** The grey waveforms above shake a pixel many times and take 3.5 s. With
   `fast_greys`, a grey refresh at 100 Hz shakes every pixel twice (20 frames to black and 20 to
   white) and then pushes once: white to black and back, black the other way, a grey to black, to

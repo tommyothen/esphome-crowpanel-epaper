@@ -431,8 +431,8 @@ void CrowPanel42::pass_finished_() {
 
 // The last frame drawn in greys, and the hash of each of its rows for after a wake, stay as they
 // were through black and white refreshes, which instead grow the window the next grey partial
-// covers: a fast partial by the bytes whose reading changed, and a balanced one from cold, after a
-// wake and without the glass's reading, or a full refresh, by the whole panel.
+// covers: a fast partial by the bytes whose reading changed, a balanced one, from cold or after a
+// wake without the glass's reading, by the rows it sent, and a full refresh by the whole panel.
 void CrowPanel42::update_finished_(Pass last) {
   if (last == Pass::GREY || last == Pass::HALF_TO_WHITE) {
     this->dirty_ = EMPTY;
@@ -443,8 +443,11 @@ void CrowPanel42::update_finished_(Pass last) {
     for (size_t y = 0; y != HEIGHT; y++)
       shown_rows[y] = this->level_row_hash_(y);
     shown_rows_valid = true;
-  } else if (last == Pass::BLACK_WHITE || last == Pass::PARTIAL) {
+  } else if (last == Pass::BLACK_WHITE) {
     this->dirty_ = {0, static_cast<uint8_t>(PLANE_ROW - 1), 0, static_cast<uint16_t>(HEIGHT - 1)};
+  } else if (last == Pass::PARTIAL) {
+    merge(this->dirty_, {0, static_cast<uint8_t>(PLANE_ROW - 1), this->first_row_,
+                         static_cast<uint16_t>(this->end_row_ - 1)});
   }
 }
 
