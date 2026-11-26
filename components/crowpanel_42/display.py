@@ -82,8 +82,8 @@ CONFIG_SCHEMA = cv.All(
             # a grey refresh takes), instead of pushing the changed pixels to black or white (0.4 s).
             # Needs grey, and PSRAM for a copy of the last frame.
             cv.Optional(CONF_GREY_PARTIALS, default=False): cv.boolean,
-            # Grey refreshes in one shake: four greys in about 1 s rather than 3.7, seven in 1.25
-            # rather than 3.95, grey partials likewise, leaving a little more of the picture before.
+            # Grey refreshes in two shakes and a push: four greys in about 1.9 s rather than 3.7, seven
+            # in 2 rather than 3.95, grey partials likewise, erasing the picture before as well.
             cv.Optional(CONF_FAST_GREYS, default=False): cv.boolean,
             # A temperature to use instead of the panel's own, which the driver reads each time the
             # supplies come on: the waveforms run faster in the warm and slower in the cold.

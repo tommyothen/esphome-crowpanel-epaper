@@ -54,7 +54,7 @@ wiring. V1.0 boards use an SSD1683 and are not supported yet.
 | Full seven greys | about 3.95 s | Measured 0.00, 0.18, 0.34, 0.49, 0.69, 0.84 and 1.00 |
 | Partial, subsequent | about 0.44 s | One-way push with per-pixel balance tracking |
 | Grey partial (`grey_partials`) | about 3.75 s | Greys in the changed window only; the rest untouched |
-| Fast greys (`fast_greys`) | 1.2 s four, 1.25 s seven | One shake instead of many: about three times quicker, a little more of the previous picture left |
+| Fast greys (`fast_greys`) | 2.0 s four or seven | Two shakes and a push: about twice as quick, erasing the picture before as well |
 
 ```yaml
 display:
@@ -76,10 +76,10 @@ display:
     grey_partials: true  # partials in greys, flashing only what changed
 ```
 
-And **fast greys**: with `fast_greys: true`, grey refreshes shake each pixel once
-instead of many times, so four greys take 1.2 s and seven 1.25 s, and grey
-partials likewise. The slow ones erase the previous picture a little better
-(within 0.03 against 0.06).
+And **fast greys**: with `fast_greys: true`, grey refreshes shake each pixel twice
+and push it once instead of shaking it many times, so four or seven greys take
+2 s rather than 3.7 or 3.95, and grey partials likewise. Drawn over every other
+grey, both leave each grey within 0.09 of where it should be.
 
 A grey partial takes as long as a grey refresh, and works across deep sleep too:
 the driver keeps a record of each row's greys in RTC memory, so after a wake it

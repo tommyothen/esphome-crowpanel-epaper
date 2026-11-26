@@ -153,16 +153,17 @@ static constexpr GreyWaveform FOUR_GREY{DARK_THIRD, LIGHT};
 // The seven-grey refresh's middle pass: black, a sixth, two thirds and white.
 static constexpr GreyWaveform EVEN_GREY{DARK_SIXTH, LIGHT};
 
-// Fast greys: one shake, not Waveshare's many. White is pushed to black for `reset` frames and back
-// to white for as many, black the other way round, and a grey to black, to white, and to black
-// again for its last few frames, which set where it lands. Every table runs 2 * reset frames, and
-// VCOM with them. At 100 Hz that is 0.8 to 1 s against the slow greys' 3.5, but it leaves a little
-// more of the picture before: across four bars drawn, drawn again, reversed and back, the fast
-// greys moved by up to 0.09 with a 40-frame reset, 0.06 with 50 and 0.05 with 60, the slow ones
-// by up to 0.03. After a 40-frame white push, 5 frames of black land at 0.68 and 9 at 0.33.
+// Fast greys: two shakes and one push, not Waveshare's many. Every pixel is shaken, pushed to black
+// and back to white for `shake` frames, `shakes` times; then white is pushed to black for `reset`
+// frames and back to white for as many, black the other way round, and a grey to black, to white,
+// and to black again for its last few frames, which set where it lands. Every table runs as long,
+// and VCOM with them. At 100 Hz four greys take 1.8 s against the slow ones' 3.5. Drawn over black,
+// dark, light and white, each grey varied by up to 0.09, as the slow greys do; without the shakes
+// the single push took 1 s but varied by up to 0.23, and one 20-frame shake by up to 0.12. After a
+// 40-frame push to white, 5 frames of black land at 0.68 and 9 at 0.33.
 struct FastGreyWaveform {
   uint8_t bytes[WAVEFORM];
-  constexpr FastGreyWaveform(uint8_t reset, uint8_t light, uint8_t dark) : bytes() {
+  constexpr FastGreyWaveform(uint8_t shake, uint8_t shakes, uint8_t reset, uint8_t light, uint8_t dark) : bytes() {
     constexpr uint8_t BLACK = 0x40, WHITE = 0x80;
     const uint8_t phases[5][3] = {
         {reset, reset, 0},                                                                       // VCOM
@@ -174,21 +175,27 @@ struct FastGreyWaveform {
         {static_cast<uint8_t>(WHITE | reset), static_cast<uint8_t>(BLACK | reset), 0},          // BB: black
     };
     for (int t = 0; t < 5; t++) {
-      bytes[t * TABLE] = 1;
+      uint8_t *shaking = bytes + t * TABLE, *push = shaking + 7;
+      shaking[0] = shakes;
+      shaking[1] = (t == 0 ? 0 : BLACK) | shake;
+      shaking[2] = (t == 0 ? 0 : WHITE) | shake;
+      shaking[5] = 1;
+      shaking[6] = 1;
+      push[0] = 1;
       for (int p = 0; p < 3; p++)
-        bytes[t * TABLE + 1 + p] = phases[t][p];
-      bytes[t * TABLE + 5] = 1;
-      bytes[t * TABLE + 6] = 1;
+        push[1 + p] = phases[t][p];
+      push[5] = 1;
+      push[6] = 1;
     }
   }
 };
-static constexpr uint8_t FAST_FOUR_RESET = 50, FAST_EVEN_RESET = 40, FAST_LIGHT = 5, FAST_DARK_THIRD = 9,
-                         FAST_DARK_SIXTH = 11;
-// Four greys, with the 50-frame reset: black, dark grey at 0.30 to 0.36, light at 0.67 to 0.72,
-// white, in 1 s. The seven-grey middle pass, dark grey at a sixth, with its half steps of 3, 5 and 3
-// frames at 150 Hz: 0.01, 0.15, 0.30, 0.49, 0.69, 0.83 and 1.03.
-static constexpr FastGreyWaveform FAST_FOUR{FAST_FOUR_RESET, FAST_LIGHT, FAST_DARK_THIRD};
-static constexpr FastGreyWaveform FAST_EVEN{FAST_EVEN_RESET, FAST_LIGHT, FAST_DARK_SIXTH};
+static constexpr uint8_t FAST_SHAKE = 20, FAST_SHAKES = 2, FAST_FOUR_RESET = 50, FAST_EVEN_RESET = 40,
+                         FAST_LIGHT = 5, FAST_DARK_THIRD = 9, FAST_DARK_SIXTH = 11;
+// Four greys, with a 50-frame push: black, dark grey at 0.28 to 0.37, light at 0.66 to 0.74, white.
+// The seven-grey middle pass, a 40-frame push and dark grey at a sixth, with its half steps of 3, 5
+// and 3 frames at 150 Hz: 0.02, 0.17, 0.31, 0.49, 0.67, 0.81 and 1.02.
+static constexpr FastGreyWaveform FAST_FOUR{FAST_SHAKE, FAST_SHAKES, FAST_FOUR_RESET, FAST_LIGHT, FAST_DARK_THIRD};
+static constexpr FastGreyWaveform FAST_EVEN{FAST_SHAKE, FAST_SHAKES, FAST_EVEN_RESET, FAST_LIGHT, FAST_DARK_SIXTH};
 
 // The seven-grey refresh's outer passes: a half step, towards black before the middle pass and
 // towards white after it, so the two cancel. The pixel's two RAM bits say which: level 2 (and
@@ -648,9 +655,15 @@ void CrowPanel42::set_frame_rates_() {
     this->fast_rate_ = frame_rate_code(fast_hz * fast_scale);
     const auto frames = [fast_scale](uint8_t n) { return static_cast<uint8_t>(std::max<long>(1, std::lround(n * fast_scale))); };
     memcpy(this->fast_four_,
-           FastGreyWaveform(frames(FAST_FOUR_RESET), frames(FAST_LIGHT), frames(FAST_DARK_THIRD)).bytes, WAVEFORM);
+           FastGreyWaveform(frames(FAST_SHAKE), FAST_SHAKES, frames(FAST_FOUR_RESET), frames(FAST_LIGHT),
+                            frames(FAST_DARK_THIRD))
+               .bytes,
+           WAVEFORM);
     memcpy(this->fast_even_,
-           FastGreyWaveform(frames(FAST_EVEN_RESET), frames(FAST_LIGHT), frames(FAST_DARK_SIXTH)).bytes, WAVEFORM);
+           FastGreyWaveform(frames(FAST_SHAKE), FAST_SHAKES, frames(FAST_EVEN_RESET), frames(FAST_LIGHT),
+                            frames(FAST_DARK_SIXTH))
+               .bytes,
+           WAVEFORM);
   }
   // The half steps keep their length against the middle pass's frames: at its rate, faster, or
   // past 200 Hz at 200 Hz with fewer frames. Both are built from the same lengths, so they cancel.

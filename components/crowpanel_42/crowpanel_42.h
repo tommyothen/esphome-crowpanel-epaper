@@ -71,8 +71,8 @@ class CrowPanel42 : public epaper_spi::EPaperBase {
   // Partial updates redraw the window around what changed in greys, flashing only it, instead of
   // pushing the changed pixels to black or white. Needs grey.
   void set_grey_partials(bool grey_partials) { this->grey_partials_ = grey_partials; }
-  // Grey refreshes in one shake, about 1 s for four greys rather than 3.7, leaving a little more of
-  // the picture before.
+  // Grey refreshes in two shakes and a push: about 1.9 s for four greys rather than 3.7, erasing the
+  // picture before as well.
   void set_fast_greys(bool fast_greys) { this->fast_greys_ = fast_greys; }
   // 4, or 7 for three-pass grey refreshes with a half step between each of the four greys.
   void set_grey_levels(uint8_t levels) {
