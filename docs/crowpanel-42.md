@@ -81,6 +81,17 @@ since the camera's response is not linear and the lamp lights the panel unevenly
 | Seven greys, retuned for this panel | 4.2 s | 0.00, 0.17, 0.31, 0.50, 0.67, 0.80, 0.96 |
 | Fast partial, 12 frames one way | 0.40 s | 0.00 black, 0.96 white; greys elsewhere stay |
 
+Also checked on the panel:
+
+- **The cold partial needs its 25 frames each way.** Erasing blacks a grey refresh drew, 15,
+  20 and 25 frames left 0.96, 0.98 and 1.00; drawing black from white, 0.12, 0.08 and 0.02.
+  A balanced partial pushes the far way first, so it needs more than the fast partial's 12.
+- **Deep sleep.** Two fast partials left 1,320 pixels a push out; they settled before the
+  sleep, the picture held, and the first update after the wake was a cold partial against the
+  controller's RAM (0.98 s), then fast ones again.
+- **The watchdog.** With BUSY stuck, an update gives up after 20 s, resets the controller and
+  sets the warning; the next update tries again.
+
 ## Still open
 
 - Check the frame-rate curve in a warm room: it borrows the 5.79" panel's maker's.
