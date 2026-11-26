@@ -76,6 +76,11 @@ display:
     grey_partials: true  # partials in greys, flashing only what changed
 ```
 
+A grey partial takes as long as a grey refresh, and works across deep sleep too:
+the driver keeps a record of each row's greys in RTC memory, so after a wake it
+redraws the band of rows that changed. Without it, partials are the fast black
+and white ones.
+
 A busy screen can have it both ways: fast black and white partials while things
 change, then, once it is still, `request_grey_partial()` redraws in greys just the
 window around everything changed since the last grey refresh, including areas a
@@ -96,22 +101,18 @@ and push it once instead of shaking it many times, so four or seven greys take
 2 s rather than 3.7 or 3.95, and grey partials likewise. Drawn over every other
 grey, both leave each grey within 0.09 of where it should be.
 
-A grey partial takes as long as a grey refresh, and works across deep sleep too:
-the driver keeps a record of each row's greys in RTC memory, so after a wake it
-redraws the band of rows that changed. Without it, partials are the fast black
-and white ones.
-
 Notes and measurements are in [docs/crowpanel-42.md](docs/crowpanel-42.md).
 
 ## Minimal configuration
 
-Pin `external_components` to a full commit SHA or a tag; GitHub will not fetch a short SHA. The board's USB-C port is a CH340
-on UART0, which resets the board into the bootloader automatically, so flashing
-needs no BOOT button.
+Pin `external_components` to a full commit SHA or a tag; GitHub will not fetch a
+short SHA. The board's USB-C port is a CH340 on UART0, which resets the board
+into the bootloader automatically, so flashing needs no BOOT button. For the
+4.2", use `crowpanel_42` for the component and the platform.
 
 ```yaml
 external_components:
-  - source: github://tommyothen/crowpanel-epaper@211bc65a480454ce0d4efb2f92e3fb401e09e7b7  # a full commit SHA or a tag
+  - source: github://tommyothen/crowpanel-epaper@3d6d823102ffd6795967b08707deff9899c28c09  # a full commit SHA or a tag
     components: [crowpanel_579]
 
 esp32:
@@ -151,7 +152,7 @@ ESPHome's built-in `epaper_spi` displays.
 
 ## Options
 
-All pins default to the 5.79" board's fixed wiring.
+All pins default to the boards' fixed wiring, which the two share.
 
 | Option | Default | Notes |
 |---|---|---|
@@ -169,35 +170,48 @@ All pins default to the 5.79" board's fixed wiring.
 | `data_rate` | `20MHz` | SPI clock rate (10 MHz on the 4.2", the UC8276C's limit) |
 | `lambda`, `pages` | none | Standard ESPHome drawing options; at most one may be set |
 
+`crowpanel_42` takes the same options, with these differences:
+
+| Option | Default | Notes |
+|---|---|---|
+| `grey_partials` | `false` | Partials redraw the window around what changed in greys; needs `grey: true` |
+| `fast_greys` | `false` | Grey refreshes in two shakes and a push: about 2 s rather than 3.7 or 3.95; needs `grey: true` |
+| `temperature_sensor` | none | Used instead of the panel's own sensor, which the driver reads anyway |
+| `busy_pin` | `GPIO48`, inverted | The UC8276C holds BUSY low while it works |
+
+`id(epd).request_grey_partial()` and `id(epd).panel_temperature()` are the 4.2"'s
+own calls.
+
 ## Drawing
 
 Draw with `Color::BLACK` on `Color::WHITE` paper.
 
 - With four greys, colours map by luma: below 64 is black, below 128 dark grey,
   below 192 light grey, and the rest white. Fonts with `bpp: 2` give
-  anti-aliased text on a grey refresh. The four greys keep Waveshare's spacing,
-  where dark grey sits close to black and makes anti-aliased text look bold.
+  anti-aliased text on a grey refresh. On the 5.79" the four greys keep
+  Waveshare's spacing, where dark grey sits close to black and makes
+  anti-aliased text look bold; on the 4.2" they are even thirds.
 - With `grey_levels: 7`, luma maps to seven even steps, and `bpp: 4` fonts use
   them. Seven greys space the four base levels evenly first, so dark grey
   stands clear of black, then add the half steps.
 - Partial refreshes are black and white and drive only pixels whose black or
   white reading changes (white from level 4 up). Greys elsewhere stay as the
   last grey refresh left them; a changed pixel shows as black or white until
-  the next full refresh.
+  the next full refresh, or on the 4.2" a grey partial.
 
 ## Front controls
 
-The dial and the two buttons are plain GPIOs, active low with the board's own
-pull-ups, so they work with ESPHome's `gpio` binary sensor and can wake the
-board from deep sleep with `esp32_ext1_wakeup` in `ANY_LOW` mode.
+The controls are plain GPIOs, active low with the board's own pull-ups, so they
+work with ESPHome's `gpio` binary sensor and can wake the board from deep sleep
+with `esp32_ext1_wakeup` in `ANY_LOW` mode. The two boards share them.
 
-| Control | GPIO |
-|---|---|
-| Dial up | GPIO6 |
-| Dial down | GPIO4 |
-| Dial press | GPIO5 |
-| MENU | GPIO2 |
-| EXIT | GPIO1 |
+| 5.79" | 4.2" | GPIO |
+|---|---|---|
+| Dial up | PRV | GPIO6 |
+| Dial down | NEXT | GPIO4 |
+| Dial press | OK | GPIO5 |
+| MENU | HOME | GPIO2 |
+| EXIT | EXIT | GPIO1 |
 
 ```yaml
 binary_sensor:
@@ -214,8 +228,10 @@ binary_sensor:
 
 Nothing extra needs configuring on the display. Before the ESP32 sleeps, the
 driver finishes any pending plane copy, settles any fast-partial pixels left
-out of balance, puts the controllers into deep sleep mode 1 (which retains
-RAM), and holds `power_pin` and `reset_pin` high through sleep. On wake, the
+out of balance, puts the 5.79"'s controllers into deep sleep mode 1 (which
+retains RAM) or switches the 4.2"'s supplies off and leaves its controller in
+standby (its own deep sleep loses the RAM within 30 minutes), and holds
+`power_pin` and `reset_pin` high through sleep. On wake, the
 first update can be partial with no flash, and `full_update_every` and the row
 hashes carry on across wakes.
 
@@ -245,11 +261,13 @@ glass, so the driver makes the next update a full one.
 - **Charge-balanced waveforms.** The cold partial, four-grey and seven-grey
   waveforms give every pixel equal frames at +15 V and -15 V on every refresh,
   with VCOM held at its DC level. Compile-time `static_assert` checks verify
-  each table's net drive and check that every table in a waveform runs to the
-  same timing, so a change that breaks balance does not compile.
+  each table's net drive, and that every table in a waveform runs to the same
+  timing (on the 4.2", that VCOM's table lasts as long as the longest), so a
+  change that breaks balance does not compile.
 - **Fast partials and cancelling.** Once the driver knows what the glass shows
   (after the first update since a boot or wake), a partial pushes each changing
-  pixel one way only: 15 frames, where a balanced partial drives 25 each way. A bit per pixel tracks
+  pixel one way only: 15 frames on the 5.79", 12 on the 4.2", where a balanced
+  partial drives 25 each way. A bit per pixel tracks
   whether that pixel is a push out of balance; each fast change flips the bit,
   so no pixel is ever more than one push out however long the device runs.
   Before the next full refresh, a 15-frame push back cancels them, hidden by
@@ -257,11 +275,16 @@ glass, so the driver makes the next update a full one.
   settling pass cancels them instead: only those pixels blink (40 frames over
   and 25 back) and land where they were. A device that wakes, draws once and
   sleeps never makes a fast partial.
-- **Discharge and power wind-down.** Every loaded waveform uses end option
-  `0x22` to discharge the pixels after the last phase. The ±15 V supplies stay
-  on for 5 s after an update so a follow-up skips switching them on (0.1 s),
-  capped at 60 s at a stretch however often updates arrive. The controllers
-  enter deep sleep 10 s after the supplies switch off.
+- **Discharge and power wind-down.** On the 5.79" every loaded waveform uses
+  end option `0x22` to discharge the pixels after the last phase. The ±15 V
+  supplies stay on for 5 s after an update so a follow-up skips switching them
+  on (0.1 s on the 5.79", 0.08 s on the 4.2"), capped at 60 s at a stretch
+  however often updates arrive. The 5.79"'s controllers enter deep sleep 10 s
+  after the supplies switch off.
+- **VCOM at its null (4.2").** VCOM is set where a frame driving 0 V leaves a
+  pixel as it is, measured on the panel, so the waveforms balance in fact, not
+  only by frame count, and pixels outside a grey partial's window keep their
+  greys.
 - **Update watchdog and boot reset.** If an update does not finish in 20 s (a
   loose ribbon or a failed controller), the driver logs an error, sets a
   warning status, resets and sleeps the controllers so the supplies switch off
@@ -279,6 +302,9 @@ glass, so the driver makes the next update a full one.
   later at another temperature; the maker's OTP partial does not change with
   temperature either. Without a sensor, waveforms run at 50 Hz (13 to 20 °C).
   Measured timings by band are in [docs/crowpanel-579.md](docs/crowpanel-579.md).
+  The 4.2" reads its panel's own temperature as its supplies come on and sets
+  its frame rate in 5 Hz steps along the same maker's curve, from 50 Hz at 11 °C
+  where it was tuned.
 - **Periodic full refreshes.** `full_update_every` caps a run of partials,
   across deep sleep too, to reset deep blacks and clear what partials leave
   behind.
@@ -318,13 +344,15 @@ sides of the seam.
   fades only to grey when a partial clears it, while black drawn by a partial
   clears cleanly. Keep large black shapes still between full refreshes, or ask
   for a full refresh with `epaper_spi.full_update_next` when they move.
-- **No internal temperature readback.** The board wires the SPI data line to
-  one GPIO as an output, so reading the controllers' internal sensor would
-  require bit-banging. Provide a `temperature_sensor` if the board runs outside
-  13 to 20 °C.
+- **No internal temperature readback on the 5.79".** Provide a
+  `temperature_sensor` if it runs outside 13 to 20 °C. The 4.2" reads its own,
+  through a 3-wire read on the same SPI pins; the 5.79" could too, but does not
+  yet.
 - **RAM for fast partials.** Tracking unsettled pixels allocates an extra 54 KB
-  alongside the 108 KB frame buffer. If that allocation fails, fast partials
-  are disabled and partials run balanced.
+  alongside the 108 KB frame buffer on the 5.79", and 30 KB alongside 60 KB on
+  the 4.2", which keeps another 60 KB for the last frame drawn in greys. If an
+  allocation fails, fast partials are disabled and partials run balanced, or
+  grey partials black and white.
 - **Sleeping mid-update.** Entering deep sleep while `epaper_spi.is_updating`
   is true leaves any unsettled fast-partial pixels uncancelled and forces a
   full refresh on the next wake.
@@ -341,6 +369,9 @@ sides of the seam.
 - Waveshare's 4.2" V2, the grey waveform: <https://github.com/waveshareteam/e-Paper>
 - Solomon Systech's SSD1683 datasheet, in Elecrow's repo above: the waveform format and the
   voltage tables
+- Elecrow's 4.2" demos, whose V1.2 code loads its own waveforms: <https://github.com/Elecrow-RD/CrowPanel-ESP32-4.2-E-paper-HMI-Display-with-400-300>
+- GxEPD2's SE0420NQ04, a UC8276C panel: <https://github.com/ZinggJM/GxEPD2/blob/master/src/other/GxEPD2_420_SE0420NQ04.cpp>
+- UltraChip's UC8276 datasheet (UC8276c_A0.6): the commands, the partial window and the timing
 
 ## Licence
 
