@@ -128,6 +128,11 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   virtual void reading_changed_(size_t y, size_t i) {}
   // Whether the panel's RAM needs the glass's reading written to both planes after the last pass.
   virtual bool copies_after_(Pass last) const { return true; }
+  // The rows the last update can have changed, first to end, for the glass's record.
+  virtual void changed_rows_(uint16_t &first, uint16_t &end) const {
+    first = 0;
+    end = this->height_;
+  }
   // Whether cancelling cleared the record of the pixels in plane byte i of row y.
   virtual bool corrects_(size_t y, size_t i) const { return true; }
   // State a driver forgets when an update is given up on.

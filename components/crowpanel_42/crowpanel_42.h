@@ -43,6 +43,18 @@ class CrowPanel42 : public crowpanel_epaper::CrowPanelBase {
   // The greys land near enough; the next grey refresh, full or asked for, settles them exactly and
   // cancels the pushes' drive. Needs grey.
   void set_glide(bool glide) { this->glide_ = glide; }
+  // Partial updates as ticks, for things that move: each update pushes every pixel four frames
+  // towards the frame just drawn, if that brings it closer, and the driver goes on drawing and
+  // ticking on its own until everything has arrived, about 30 ticks a second for a small window.
+  // An update asked for during a tick waits for it, so the latest frame wins. Greys land as near
+  // as a glide's; the next grey refresh settles them. Needs grey.
+  void set_live(bool live) {
+    this->live_ = live;
+    this->estimate_valid_ = false;
+    if (!live)
+      this->fast_loop_.stop();
+  }
+  void update() override;
   // Grey refreshes in two shakes and a push: about 1.9 s for four greys rather than 3.7, erasing the
   // picture before as well.
   void set_fast_greys(bool fast_greys) { this->fast_greys_ = fast_greys; }
@@ -78,11 +90,21 @@ class CrowPanel42 : public crowpanel_epaper::CrowPanelBase {
   void settle_now_() override;
   void prepare_for_sleep_(bool settled) override;
   void setup_controllers_() override;
-  void plan_started_() override { this->windowed_ = false; }
+  void plan_started_() override {
+    this->windowed_ = false;
+    this->ticking_ = false;
+  }
   bool plan_own_update_() override;
   void pass_finished_() override;
   void update_finished_(Pass last) override;
   void reading_changed_(size_t y, size_t i) override;
+  // A tick changes only its window's rows.
+  void changed_rows_(uint16_t &first, uint16_t &end) const override {
+    first = this->ticking_ ? this->window_.first_row : 0;
+    end = this->ticking_ ? this->window_.last_row + 1 : HEIGHT;
+  }
+  // A glide or a tick rewrites only its window's reading, itself.
+  bool copies_after_(Pass last) const override { return last != Pass::DOSE || this->glass_ == nullptr; }
   bool corrects_(size_t y, size_t i) const override { return !this->windowed_ || this->in_window_(y, i); }
   void forget_() override;
 
@@ -106,12 +128,17 @@ class CrowPanel42 : public crowpanel_epaper::CrowPanelBase {
   void build_masks_(Pass pass, uint8_t frames);
   void send_window_();
   void record_drive_(Pass last);
+  void copy_stale_reading_();
+  void enter_window_(const Window &window);
+  bool plan_tick_();
+  void estimate_levels_();
   void wind_down_();
   void switch_supplies_on_();
   void switch_supplies_off_();
 
   bool grey_partials_{false};
   bool glide_{false};
+  bool live_{false};
   bool fast_greys_{false};
   bool ready_{false};           // the controller has been reset and initialised
   uint8_t half_rate_{0x1A};     // the seven-grey half steps', and the steps themselves
@@ -136,6 +163,17 @@ class CrowPanel42 : public crowpanel_epaper::CrowPanelBase {
   int8_t *push_{nullptr};                // this glide's dose for each pixel in its window
   uint8_t scan_frames_[16]{};            // each DOSE or UNDOSE pass's frames, a power of two
   uint8_t *masks_{nullptr};              // a scan's OLD and NEW planes, a bit a pixel each
+  // Live ticks: each pixel's lightness as the driver models it, 0 black to 255 white; the pixels
+  // still on their way; an update asked for during a tick.
+  uint8_t *estimate_{nullptr};
+  bool estimate_valid_{false};
+  bool ticking_{false};                  // this update is a tick, its masks already built
+  Window moving_{PLANE_ROW, 0, HEIGHT, 0};
+  uint8_t *moving_banks_{nullptr};       // a byte for each 8 pixels: still on its way
+  // Where the planes hold a glide's or a tick's masks rather than the glass's reading.
+  Window stale_{PLANE_ROW, 0, HEIGHT, 0};
+  bool update_waiting_{false};
+  HighFrequencyLoopRequester fast_loop_;  // the main loop unpaced while ticking
 };
 
 }  // namespace esphome::crowpanel_42

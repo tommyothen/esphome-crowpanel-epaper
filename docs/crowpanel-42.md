@@ -136,6 +136,28 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   glided again; after a glide over the whole grid, a full refresh cancelled 102,852 pixels'
   drive first, and after a glide out and back, the requested grey partial left every cell
   within 0.03 of an exact refresh.
+- **Streams of short refreshes.** Equal refreshes one after another drive harder than one-frame
+  ones and, towards white, than the binary digits: from a settled white, refreshes of 4 frames at
+  200 Hz left 0.89, 0.70, 0.52, 0.40, 0.31, 0.25, 0.18, 0.14 and 0.11 after 4, 8, 12, 16, 20, 24,
+  32, 40 and 48 frames; from a settled black, 0.11, 0.26, 0.46, 0.64, 0.75, 0.82, 0.90, 0.93 and
+  0.96. Refreshes of 2 frames reached 0.18 and 0.95 after 48, of 8 frames 0.03 and 1.03.
+- **Live ticks (experimental).** With `grey_partials: live` each update is one 4-frame refresh
+  in a window: the driver models each pixel's lightness along the curves above and pushes it
+  black, white or not at all, whichever brings it nearer its level, ticking on by itself while
+  anything is still on its way. A 100x100 box jumping between two places took 12 ticks each way
+  and, once still, read 0.12 where it landed and 1.01 where it left. Two boxes sliding across a
+  white strip, redrawn every 30 ms, ran at 8.9 ticks a second, of which, per tick, the test's
+  own drawing (51,000 pixels) took 30 ms, finding what changed 3, deciding the pushes 20 to 47
+  before skipping settled 8-pixel banks and a lookup table brought it down, sending the masks
+  20, the refresh and the glass's record 40 and the rest 6. What greys look like in motion, and
+  how near a moving picture settles once still, is not measured yet: the camera rig took its
+  photos too late to tell (below).
+- **The camera rig's timing.** The photo tool waits 0.5 s after the board logs a snapshot, then
+  takes about a second to grab frames. A test that changes the panel within 1.5 s of a snapshot
+  photographs the change, not what it meant to: two box-jump tests a second apart read as if
+  every jump lagged one behind, and a still frame came out striped because the grey refresh
+  asked for a second later was mid-flash. With 2 s or more between a snapshot and the next
+  change, the same glides read 0.07 or 0.08 where the box went and 0.98 to 1.04 everywhere else.
 - **Fast greys.** The grey waveforms above shake a pixel many times and take 3.5 s. With
   `fast_greys`, a grey refresh at 100 Hz shakes every pixel twice (20 frames to black and 20 to
   white) and then pushes once: white to black and back, black the other way, a grey to black, to

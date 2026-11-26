@@ -62,6 +62,7 @@ wiring. V1.0 boards use an SSD1683 and are not supported yet.
 | Partial, subsequent | about 0.44 s | One-way push with per-pixel balance tracking |
 | Grey partial (`grey_partials`) | about 3.75 s | Greys in the changed window only; the rest untouched |
 | Glide (`grey_partials: glide`) | 0.35 to 0.45 s for a box, 1.06 s whole panel | No flash: each changed pixel goes straight to its new grey, within about 0.04 |
+| Live (`grey_partials: live`, experimental) | about 9 ticks a second for a box sliding across a strip | Each update nudges pixels towards the latest frame; ticks on until everything arrives |
 | Fast greys (`fast_greys`) | 2.0 s four or seven | Two shakes and a push: about twice as quick, erasing the picture before as well |
 
 ```yaml
@@ -118,6 +119,16 @@ display:
     grey: true
     grey_partials: glide  # no flash; greys settle exactly at the next grey refresh
 ```
+
+**Live** (experimental): with `grey_partials: live`, each update is a short
+tick that pushes every pixel a little towards the frame just drawn, and the
+driver keeps drawing and ticking on its own until everything has arrived. An
+update asked for during a tick waits for it, so the latest frame wins. It suits
+things that move: redraw every 30 ms or so, and the panel follows as fast as
+the ink allows, about 0.3 to 0.5 s for a full black and white change. Pixels
+that have reached black or white keep being pushed the same way while their
+recorded drive points the other way, which changes nothing you can see but
+pays it back. The same record and settling as glides apply.
 
 And **fast greys**: with `fast_greys: true`, grey refreshes shake each pixel twice
 and push it once instead of shaking it many times, so four or seven greys take
@@ -197,7 +208,7 @@ All pins default to the boards' fixed wiring, which the two share.
 
 | Option | Default | Notes |
 |---|---|---|
-| `grey_partials` | `false` | `true`: partials redraw the window around what changed in greys. `glide`: they take each changed pixel straight to its new grey without flashing. Needs `grey: true` |
+| `grey_partials` | `false` | `true`: partials redraw the window around what changed in greys. `glide`: they take each changed pixel straight to its new grey without flashing. `live` (experimental): each update is a tick towards the latest frame, for things that move. Needs `grey: true` |
 | `fast_greys` | `false` | Grey refreshes in two shakes and a push: about 2 s rather than 3.7 or 3.95; needs `grey: true` |
 | `temperature_sensor` | none | Used instead of the panel's own sensor, which the driver reads anyway |
 | `busy_pin` | `GPIO48`, inverted | The UC8276C holds BUSY low while it works |

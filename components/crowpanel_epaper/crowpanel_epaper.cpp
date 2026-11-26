@@ -317,7 +317,9 @@ void CrowPanelBase::power_off() {
 // change flips its pixel) or that cancelling has put right.
 void CrowPanelBase::record_glass_(bool fast, bool corrected) {
   uint8_t row[MAX_PLANE_ROW];
-  for (size_t y = 0; y != this->height_; y++) {
+  uint16_t first, end;
+  this->changed_rows_(first, end);
+  for (size_t y = first; y != end; y++) {
     this->plane_bytes_(WHITE_SOURCE, y, 0, this->plane_row_, row);
     glass_rows[y] = row_hash(row, this->plane_row_);
     if (this->glass_ == nullptr)

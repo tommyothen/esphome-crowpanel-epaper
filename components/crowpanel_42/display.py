@@ -81,10 +81,11 @@ CONFIG_SCHEMA = cv.All(
             # Partial updates redraw the area that changed in greys, flashing only it (as long as
             # a grey refresh takes), instead of pushing the changed pixels to black or white (0.4 s).
             # "glide" walks each changed pixel to its new grey instead, without flashing, in a
-            # fraction of that; the next grey refresh settles them exactly. Needs grey, and PSRAM
-            # for a copy of the last frame.
+            # fraction of that; the next grey refresh settles them exactly. "live" makes each
+            # update a short tick towards the frame drawn, ticking on until everything arrives,
+            # for things that move. Needs grey, and PSRAM for a copy of the last frame.
             cv.Optional(CONF_GREY_PARTIALS, default=False): cv.Any(
-                cv.boolean, cv.one_of("glide", lower=True)
+                cv.boolean, cv.one_of("glide", "live", lower=True)
             ),
             # Grey refreshes in two shakes and a push: four greys in about 1.9 s rather than 3.7, seven
             # in 2 rather than 3.95, grey partials likewise, erasing the picture before as well.
@@ -123,6 +124,8 @@ async def to_code(config):
     cg.add(var.set_grey_levels(config[CONF_GREY_LEVELS]))
     if config[CONF_GREY_PARTIALS] == "glide":
         cg.add(var.set_glide(True))
+    elif config[CONF_GREY_PARTIALS] == "live":
+        cg.add(var.set_live(True))
     else:
         cg.add(var.set_grey_partials(config[CONF_GREY_PARTIALS]))
     cg.add(var.set_fast_greys(config[CONF_FAST_GREYS]))
