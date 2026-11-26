@@ -14,6 +14,8 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   0xFF throughout, and a refresh with the LUT from OTP runs for 3 ms and moves
   nothing. Every refresh runs a waveform the driver loads, as Elecrow's own code
   does.
+- **The data line reads back.** With GPIO11 switched to an input after a read command, the
+  status flags read 0x13 idle and 0x15 with the supplies on.
 - **The panel's temperature.** The controller senses it as the supplies come on (TS_AUTO),
   and the driver reads it then with 0x40, through a second device on the SPI bus in 3-wire
   half-duplex mode: the board wires the panel's data line to the bus's MOSI pin alone. It read
@@ -25,10 +27,6 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   would put this panel's tuning point on an edge, where one degree moved every waveform by
   40%. The seven-grey half steps scale with it, and past 200 Hz run at 200 Hz with their
   frames scaled to match. This panel's blank OTP cannot confirm the curve.
-- **The data line reads back.** With GPIO11 switched to an input after a read
-  command, the status flags read 0x13 idle and 0x15 with the supplies on, and
-  0x40 returns the panel's own temperature in whole degrees (11 °C on the first
-  night).
 - **The waveform format is the SSD1683's.** Per table, groups of seven bytes: a
   repeat count, four phases (the level in the top two bits: 0 V, VSH, VSL, VDHR;
   frames in the rest, up to 63) and two state repeats. A repeat count of 1 plays
@@ -63,8 +61,8 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   temperature is read at 1 MHz.
 - **Supplies.** Power on (0x04) takes 80 ms with Elecrow's booster soft start
   (0x06 96 96 29) and 310 ms with the default; power off (0x02) 40 ms.
-- **Frame rate.** 0x30 sets it in 5 Hz steps, from 5 Hz at 0x00 to 200 Hz;
-  Elecrow uses 0x09, 50 Hz.
+- **Frame rate.** 0x30 sets it in 5 Hz steps from 5 Hz at 0x00 to 120 Hz at 0x17, then 10 Hz
+  steps to 200 Hz at 0x1F; Elecrow uses 0x09, 50 Hz.
 - **Orientation.** RAM x runs along the 400 pixel side and y along the 300; with the
   board turned so Elecrow's factory menu reads normally, the origin is top left and
   nothing is mirrored.
@@ -82,7 +80,6 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   repeat then 1 more white. Four greys are even thirds, as ESPHome's anti-aliased fonts blend
   (Waveshare's own sat at 0.26 and 0.75). Seven greys add half steps at 150 Hz: 3, 5 and 4
   frames for levels 2, 3 and 5.
-
 - **Grey partials, through the partial window.** 0x91 and 0x90 confine a refresh to a window,
   8 pixels at a time across and a row at a time down, and the pixels outside rest at 0 V. With
   the gates scanning the whole panel (PT_SCAN 1) and VCOM at its null, three windowed grey
@@ -101,8 +98,9 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   `request_grey_partial()` makes the next update a grey refresh of the window around both. A box
   drawn, moved and taken away again by black and white partials over grey bands left a light
   grey at 0.96, white; the requested grey partial redrew x 200 to 319 by y 100 to 219, exactly
-  where the readings had changed, and put it back at 0.71 against the band's 0.72.
-
+  where the readings had changed, and put it back at 0.71 against the band's 0.72. The window is
+  one rectangle around everything changed, so changes far apart redraw what lies between them
+  too, to the same greys.
 - **Fast greys.** The grey waveforms above shake a pixel many times and take 3.5 s. With
   `fast_greys`, a grey refresh at 100 Hz shakes every pixel twice (20 frames to black and 20 to
   white) and then pushes once: white to black and back, black the other way, a grey to black, to
@@ -114,15 +112,17 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   white, then four vertical bars of the same greys across them: every grey over every grey. Down
   a bar, the slow greys varied by up to 0.09; the fast greys without shakes by up to 0.23 (0.29
   with a 40-frame push, 0.21 with 60), with one 20-frame shake 0.12, with two 0.09. Short shakes
-  helped less than long ones: six of 3 frames, 0.22; four of 5, 0.15.
+  helped less than long ones: six of 3 frames, 0.22; four of 5, 0.15. Black and white bars by
+  the black and white refresh over the same bands varied by up to 0.04.
 
 ## Measured
 
 Times are whole updates, drawing included, with logging at DEBUG: VERBOSE logging over the
 115200 baud UART adds about 0.15 s to each. Greys are the first refresh after black and white
-frames; repeated, they stay within 0.04. At 11 to 12 °C (the panel's sensor and the flat's own agreed), 50 Hz, against flat white and black
-frames, each bar the panel's full height: where a bar sits moves its reading by up to 0.05,
-since the camera's response is not linear and the lamp lights the panel unevenly.
+frames; repeated, they stay within 0.04. At 11 to 12 °C (the panel's sensor and the flat's own
+agreed), 50 Hz, against flat white and black frames, each bar the panel's full height: where a
+bar sits moves its reading by up to 0.05, since the camera's response is not linear and the lamp
+lights the panel unevenly.
 
 | Refresh | Time | Result |
 |---|---|---|
@@ -131,6 +131,7 @@ since the camera's response is not linear and the lamp lights the panel unevenly
 | Seven greys | 3.95 s | 0.00, 0.18, 0.34, 0.49, 0.69, 0.84, 1.00 |
 | Fast partial, 12 frames one way | 0.44 s | 0.00 black, 0.96 white; greys elsewhere stay |
 | Grey partial (`grey_partials`), four greys | 3.75 s | The window only; outside within 0.01 |
+| Grey partial with fast greys, seven greys | 2.3 s | The window only |
 | Four fast greys (`fast_greys`) | 2.0 s | 0.01, 0.30, 0.69, 0.99 |
 | Seven fast greys (`fast_greys`) | 2.0 s | 0.01, 0.16, 0.31, 0.46, 0.65, 0.80, 0.98 |
 | Nothing changed | 0.09 s | Nothing driven |
@@ -147,9 +148,14 @@ Also checked on the panel:
   then the next count: a grey refresh of the band of rows the digit touched (x 0 to 399, y 182
   to 248) from the row record in RTC memory, then exact windows again. The grey ramp above it
   was never driven.
+- **Sixty fast partials, then a full refresh.** A black box swept back and forth over four grey
+  bands by 60 fast partials, then one grey refresh, its cancelling pass first: where the box had
+  been and where it had not read the same as before, within 0.02.
 - **The watchdog.** With BUSY stuck, an update gives up after 20 s, resets the controller and
   sets the warning; the next update tries again.
 
 ## Still open
 
 - Check the frame-rate curve in a warm room: it borrows the 5.79" panel's maker's.
+- Fast greys erase the picture before as well as the slow ones in half the time; once they have
+  had more use, they could be the default.
