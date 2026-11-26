@@ -38,6 +38,11 @@ class CrowPanel42 : public crowpanel_epaper::CrowPanelBase {
   // Partial updates redraw the window around what changed in greys, flashing only it, instead of
   // pushing the changed pixels to black or white. Needs grey.
   void set_grey_partials(bool grey_partials) { this->grey_partials_ = grey_partials; }
+  // Partial updates walk each changed pixel from its grey to its new one in a few short pushes,
+  // without flashing, in a fraction of a grey refresh, rather than redrawing the window in greys.
+  // The greys land near enough; the next grey refresh, full or asked for, settles them exactly and
+  // cancels the pushes' drive. Needs grey.
+  void set_glide(bool glide) { this->glide_ = glide; }
   // Grey refreshes in two shakes and a push: about 1.9 s for four greys rather than 3.7, erasing the
   // picture before as well.
   void set_fast_greys(bool fast_greys) { this->fast_greys_ = fast_greys; }
@@ -65,6 +70,7 @@ class CrowPanel42 : public crowpanel_epaper::CrowPanelBase {
   void deep_sleep() override;
 
   bool send_planes_(const Source &old_source, const Source &new_source) override;
+  bool send_own_planes_(Pass pass) override;
   void start_pass_(Pass pass) override;
   // A hardware reset, which switches the supplies off and the registers back to their defaults but
   // keeps the RAM.
@@ -92,11 +98,20 @@ class CrowPanel42 : public crowpanel_epaper::CrowPanelBase {
   uint32_t level_row_hash_(size_t y) const;
   bool in_window_(size_t y, size_t bank) const;
   bool unsettled_in_window_() const;
+  // Glides: this update's doses, a scan for each bit of them the window needs, and its masks.
+  void set_doses_();
+  bool plan_glide_();
+  void plan_scans_(Pass pass, uint8_t bits);
+  uint8_t drive_bits_() const;
+  void build_masks_(Pass pass, uint8_t frames);
+  void send_window_();
+  void record_drive_(Pass last);
   void wind_down_();
   void switch_supplies_on_();
   void switch_supplies_off_();
 
   bool grey_partials_{false};
+  bool glide_{false};
   bool fast_greys_{false};
   bool ready_{false};           // the controller has been reset and initialised
   uint8_t half_rate_{0x1A};     // the seven-grey half steps', and the steps themselves
@@ -114,6 +129,13 @@ class CrowPanel42 : public crowpanel_epaper::CrowPanelBase {
   bool windowed_{false};              // this update refreshes only window_
   Window window_{};
   Window dirty_{PLANE_ROW, 0, HEIGHT, 0};  // what black and white partials have changed since; empty
+  // Each pixel's drive since its last balanced refresh, in frames at 200 Hz, + towards black.
+  int8_t *drive_{nullptr};
+  uint32_t driven_count_{0};             // pixels with any
+  int8_t doses_[7][7]{};                 // this update's glide from level to level, the same units
+  int8_t *push_{nullptr};                // this glide's dose for each pixel in its window
+  uint8_t scan_frames_[16]{};            // each DOSE or UNDOSE pass's frames, a power of two
+  uint8_t *masks_{nullptr};              // a scan's OLD and NEW planes, a bit a pixel each
 };
 
 }  // namespace esphome::crowpanel_42

@@ -485,7 +485,9 @@ void CrowPanel579::refresh_screen(bool partial) {
     case Pass::HALF_TO_WHITE:
       this->load_waveform_(HALF_TO_WHITE[this->band_()].bytes, FRAMES_125_HZ);
       break;
-    case Pass::BLACK_WHITE:
+    case Pass::BLACK_WHITE:  // run above
+    case Pass::DOSE:         // the 4.2"'s alone
+    case Pass::UNDOSE:
       break;
   }
   this->command(0x20);

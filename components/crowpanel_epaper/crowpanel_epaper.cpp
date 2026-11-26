@@ -283,6 +283,9 @@ bool CrowPanelBase::transfer_data() {
       return this->send_planes_(Source{HALF_HIGH_BITS.table, nullptr}, Source{HALF_LOW_BITS.table, nullptr});
     case Pass::CORRECT:
       return this->send_planes_(Source{nullptr, this->unsettled_}, Source{nullptr, this->glass_});
+    case Pass::DOSE:
+    case Pass::UNDOSE:
+      return this->send_own_planes_(this->passes_[this->pass_index_]);
   }
   return true;
 }
@@ -303,7 +306,8 @@ void CrowPanelBase::power_off() {
   this->pass_index_ = 0;
   if (this->unchanged_)
     return;
-  this->record_glass_(last == Pass::FAST, this->passes_[0] == Pass::CORRECT);
+  const Pass *passes = this->passes_, *end = passes + this->pass_count_;
+  this->record_glass_(last == Pass::FAST, std::find(passes, end, Pass::CORRECT) != end);
   this->copying_ = this->copies_after_(last);
   this->update_finished_(last);
 }

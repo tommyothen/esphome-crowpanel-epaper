@@ -46,7 +46,7 @@ CrowPanel42 = crowpanel_42_ns.class_("CrowPanel42", CrowPanelBase)
 def _needs_grey(config):
     if config[CONF_GREY_LEVELS] == 7 and not config[CONF_GREY]:
         raise cv.Invalid("grey_levels: 7 needs grey: true")
-    if config[CONF_GREY_PARTIALS] and not config[CONF_GREY]:
+    if config[CONF_GREY_PARTIALS] is not False and not config[CONF_GREY]:
         raise cv.Invalid("grey_partials needs grey: true")
     if config[CONF_FAST_GREYS] and not config[CONF_GREY]:
         raise cv.Invalid("fast_greys needs grey: true")
@@ -80,8 +80,12 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_GREY_LEVELS, default=4): cv.one_of(4, 7, int=True),
             # Partial updates redraw the area that changed in greys, flashing only it (as long as
             # a grey refresh takes), instead of pushing the changed pixels to black or white (0.4 s).
-            # Needs grey, and PSRAM for a copy of the last frame.
-            cv.Optional(CONF_GREY_PARTIALS, default=False): cv.boolean,
+            # "glide" walks each changed pixel to its new grey instead, without flashing, in a
+            # fraction of that; the next grey refresh settles them exactly. Needs grey, and PSRAM
+            # for a copy of the last frame.
+            cv.Optional(CONF_GREY_PARTIALS, default=False): cv.Any(
+                cv.boolean, cv.one_of("glide", lower=True)
+            ),
             # Grey refreshes in two shakes and a push: four greys in about 1.9 s rather than 3.7, seven
             # in 2 rather than 3.95, grey partials likewise, erasing the picture before as well.
             cv.Optional(CONF_FAST_GREYS, default=False): cv.boolean,
@@ -117,7 +121,10 @@ async def to_code(config):
     cg.add(var.set_full_update_every(config[CONF_FULL_UPDATE_EVERY]))
     cg.add(var.set_grey(config[CONF_GREY]))
     cg.add(var.set_grey_levels(config[CONF_GREY_LEVELS]))
-    cg.add(var.set_grey_partials(config[CONF_GREY_PARTIALS]))
+    if config[CONF_GREY_PARTIALS] == "glide":
+        cg.add(var.set_glide(True))
+    else:
+        cg.add(var.set_grey_partials(config[CONF_GREY_PARTIALS]))
     cg.add(var.set_fast_greys(config[CONF_FAST_GREYS]))
     if temperature := config.get(CONF_TEMPERATURE_SENSOR):
         cg.add(var.set_temperature_sensor(await cg.get_variable(temperature)))

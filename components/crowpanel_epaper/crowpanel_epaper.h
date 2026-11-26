@@ -97,6 +97,8 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
     HALF_TO_BLACK,  // seven greys: the half step, the even four, the half step back
     EVEN_GREY,
     HALF_TO_WHITE,
+    DOSE,           // a glide: one of its scans pushing each pixel part way to its new grey
+    UNDOSE,         // one of the scans cancelling glides' drive before a grey refresh
   };
 
   // The controllers, which a board's driver supplies.
@@ -114,8 +116,11 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   // Hooks a driver may use.
   virtual void setup_controllers_() {}
   virtual void plan_started_() {}
-  // A driver's own kind of update, planned in passes_; false to plan as the base does.
+  // A driver's own kind of update, planned in passes_; false to plan as the base does, after any
+  // passes the driver planned first.
   virtual bool plan_own_update_() { return false; }
+  // Sends the planes of a pass only the driver knows; true once they are all out.
+  virtual bool send_own_planes_(Pass pass) { return true; }
   virtual void pass_finished_() {}
   // After the last pass is recorded.
   virtual void update_finished_(Pass last) {}
@@ -148,7 +153,7 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   InternalGPIOPin *hold_reset_pin_{nullptr};
   bool grey_{false};
   bool seven_{false};
-  Pass passes_[4]{};
+  Pass passes_[16]{};
   uint8_t pass_count_{0};
   uint8_t pass_index_{0};
   bool pass_started_{false};
