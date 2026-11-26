@@ -1,0 +1,106 @@
+# Bring-up test card for the crowpanel_42 driver (CrowPanel 4.2", V1.2). Needs no
+# network: flash over USB and read the log there.
+#
+#   esphome run test-card-42.yaml
+#
+# What it shows, and what to look for:
+# - A frame on the outermost pixels and the four corners named: a missing edge or
+#   mirrored text means the rotation is wrong.
+# - Seven greys from black to white, in even steps.
+# - Anti-aliased text in black and in dark grey.
+# - The panel's own temperature, read each time its supplies come on.
+# - A counter and a box that moves every update. Every sixth update is a full grey
+#   refresh; the ones between are grey partials, which redraw in greys only the
+#   window around the counter and the box: the rest of the card does not flash.
+#   With grey_partials off they are fast black and white partials instead.
+esphome:
+  name: crowpanel-test-card-42
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: DEBUG
+  hardware_uart: UART0  # the USB-C port is a CH340 on UART0, not the S3's own USB
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+
+font:
+  - file: "gfonts://Inter@600"
+    id: small
+    size: 14
+    bpp: 2
+  - file: "gfonts://Inter@600"
+    id: medium
+    size: 24
+    bpp: 2
+  - file: "gfonts://Inter@700"
+    id: big
+    size: 56
+    bpp: 2
+    glyphs: "0123456789"
+
+globals:
+  - id: updates
+    type: uint32_t
+    initial_value: "0"
+
+# Fires once at boot too, so the first update is the first grey refresh.
+interval:
+  - interval: 15s
+    then:
+      - lambda: id(updates)++;
+      - component.update: epd
+
+display:
+  - platform: crowpanel_42
+    id: epd
+    grey: true
+    grey_levels: 7
+    grey_partials: true
+    full_update_every: 6
+    lambda: |-
+      const int w = it.get_width(), h = it.get_height();
+      const auto ink = Color::BLACK, paper = Color::WHITE;
+      const Color dark(85, 85, 85);
+
+      it.rectangle(0, 0, w, h, ink);
+      it.print(4, 4, id(small), ink, TextAlign::TOP_LEFT, "TOP LEFT", paper);
+      it.print(w - 4, 4, id(small), ink, TextAlign::TOP_RIGHT, "TOP RIGHT", paper);
+      it.print(4, h - 4, id(small), ink, TextAlign::BOTTOM_LEFT, "BOTTOM LEFT", paper);
+      it.print(w - 4, h - 4, id(small), ink, TextAlign::BOTTOM_RIGHT, "BOTTOM RIGHT", paper);
+
+      // Seven greys, black to white
+      for (int i = 0; i < 7; i++) {
+        const uint8_t v = i * 255 / 6;
+        it.filled_rectangle(22 + i * 51, 28, 51, 56, Color(v, v, v));
+      }
+      it.rectangle(21, 27, 359, 58, ink);
+
+      // Anti-aliased text, in black and in dark grey
+      it.print(22, 94, id(medium), ink, TextAlign::TOP_LEFT, "Bins out tonight", paper);
+      it.print(22, 124, id(medium), dark, TextAlign::TOP_LEFT, "Rain from 15:00", paper);
+      const float celsius = id(epd).panel_temperature();
+      if (!std::isnan(celsius))
+        it.printf(w - 22, 160, id(small), ink, paper, TextAlign::TOP_RIGHT, "Panel %.0f °C", celsius);
+
+      // Between full refreshes: a counter and a box that moves
+      const uint32_t n = id(updates);
+      it.printf(w / 2, 268, id(big), ink, paper, TextAlign::BASELINE_CENTER, "%u", (unsigned) n);
+      it.filled_rectangle(n % 2 ? 22 : 278, 200, 100, 40, ink);
+      it.printf(22, 160, id(small), ink, paper, TextAlign::TOP_LEFT, "update %u, %s", (unsigned) n,
+                (n - 1) % 6 == 0 ? "full" : "partial");

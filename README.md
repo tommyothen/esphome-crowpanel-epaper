@@ -256,6 +256,9 @@ glass, so the driver makes the next update a full one.
 
 ## Test card
 
+For the 4.2", [test-card-42.yaml](test-card-42.yaml) does the same with seven greys, the panel's
+own temperature and grey partials.
+
 [test-card.yaml](test-card.yaml) needs no network: flash and read logs over USB
 with `esphome run test-card.yaml`. It draws a border on the outermost pixels
 with the four corners named, four greys on each half, anti-aliased text in

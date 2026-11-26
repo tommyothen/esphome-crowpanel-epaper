@@ -914,8 +914,9 @@ void CrowPanel42::record_glass_(bool fast, bool corrected) {
     for (size_t i = 0; i != BIT_PLANE; i++)
       this->unsettled_count_ += __builtin_popcount(this->unsettled_[i]);
   }
-  if (this->unsettled_count_ != 0)
+  if (this->unsettled_count_ != 0) {
     ESP_LOGV(TAG, "%u pixels a push out of balance", (unsigned) this->unsettled_count_);
+  }
 }
 
 // The base runs one step of the update a loop() call, and ESPHome calls loop() about every 16 ms,
