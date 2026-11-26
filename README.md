@@ -160,7 +160,7 @@ into the bootloader automatically, so flashing needs no BOOT button. For the
 
 ```yaml
 external_components:
-  - source: github://tommyothen/crowpanel-epaper@b31db6646d587e12f46092f76ea531a0f2905ddf  # a full commit SHA or a tag
+  - source: github://tommyothen/crowpanel-epaper@6d2fad834167507be36253891417bc9f2f72fe72  # a full commit SHA or a tag
     components: [crowpanel_579, crowpanel_epaper]  # crowpanel_epaper is the core both boards share
 
 esp32:
