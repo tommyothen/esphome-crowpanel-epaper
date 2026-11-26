@@ -570,6 +570,12 @@ void CrowPanel579::refresh_screen(bool partial) {
   }
   const Pass pass = this->passes_[this->pass_index_];
   if (pass == Pass::BLACK_WHITE) {
+    // The panel's own refresh wants the registers as a reset leaves them: after a loaded
+    // waveform's, which sets 0x21 among others, it drew every row the last partial had not
+    // touched black. A software reset restores them and leaves the RAM as it is.
+    this->command(0x12);
+    this->wait_idle_(100);
+    this->cmd_data(0x18, {0x80});
     this->cmd_data(0x3C, {BORDER_FULL});
     this->cmd_data(0x22, {UPDATE_FULL});
     this->command(0x20);
