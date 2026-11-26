@@ -268,6 +268,17 @@ glass, so the driver makes the next update a full one.
   across deep sleep too, to reset deep blacks and clear what partials leave
   behind.
 
+## Examples
+
+Two demos need no network: flash one over USB and drive it from the board's own
+buttons. Each refresh's time shows on the panel a moment after it lands.
+
+- [examples/demo-579.yaml](examples/demo-579.yaml): the dial counts with fast partials, the press
+  swaps four and seven greys, MENU runs a grey refresh, EXIT sleeps for 10 s.
+- [examples/demo-42.yaml](examples/demo-42.yaml): prev and next count, by fast black and white
+  partials or by grey partials (OK switches), Home swaps four and seven greys, Exit sleeps for
+  10 s; fast greys throughout, and the panel's own temperature in the corner.
+
 ## Test card
 
 For the 4.2", [test-card-42.yaml](test-card-42.yaml) does the same with seven greys, the panel's

@@ -1,0 +1,198 @@
+# A demo of the 5.79" driver, no network. The dial counts with fast partials, the press swaps four
+# and seven greys, MENU runs a grey refresh, EXIT sleeps for 10 s. Each refresh's time shows
+# on the panel just after it lands.
+esphome:
+  name: crowpanel-demo-579
+  includes:
+    - demo.h
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_UNDEFINED) {
+              demo::count()++;
+              id(woke) = true;
+            } else {
+              id(want_grey) = true;
+            }
+        - script.execute: { id: request, grey: false }
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: UART0
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [crowpanel_579]
+
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+
+deep_sleep:
+  id: sleeper
+  sleep_duration: 10s
+  esp32_ext1_wakeup:
+    mode: ANY_LOW
+    pins:
+      - { number: GPIO6, allow_other_uses: true }
+      - { number: GPIO4, allow_other_uses: true }
+      - { number: GPIO5, allow_other_uses: true }
+      - { number: GPIO1, allow_other_uses: true }
+      - { number: GPIO2, allow_other_uses: true }
+
+globals:
+  - { id: dirty, type: bool, initial_value: "false" }        # something to draw
+  - { id: want_grey, type: bool, initial_value: "false" }
+  - { id: readout_due, type: bool, initial_value: "false" }  # the last refresh's time is not on the panel yet
+  - { id: measuring, type: bool, initial_value: "false" }
+  - { id: woke, type: bool, initial_value: "false" }         # the next refresh is the first since a wake
+  - { id: asleep, type: bool, initial_value: "false" }
+  - { id: seven, type: bool, initial_value: "true" }
+  - { id: kind, type: int, initial_value: "0" }              # demo::Kind of the refresh running
+  - { id: last_kind, type: int, initial_value: "0" }
+  - { id: last_ms, type: uint32_t, initial_value: "0" }
+  - { id: started, type: uint32_t, initial_value: "0" }
+
+script:
+  - id: request
+    mode: parallel
+    parameters:
+      grey: bool
+    then:
+      - lambda: |-
+          id(dirty) = true;
+          if (grey)
+            id(want_grey) = true;
+      - if:
+          condition:
+            not:
+              script.is_running: pump
+          then:
+            - script.execute: pump
+
+  # Draws until nothing is owed: a measured refresh for each burst of input, then one more for
+  # its time, which is skipped if more input came and carries it instead.
+  - id: pump
+    then:
+      - while:
+          condition:
+            lambda: return id(dirty) || id(readout_due);
+          then:
+            - lambda: |-
+                id(measuring) = id(dirty);
+                id(readout_due) = id(dirty);
+                id(dirty) = false;
+                if (id(want_grey)) {
+                  id(epd).request_full_update();
+                  id(want_grey) = false;
+                  id(kind) = demo::GREY;
+                } else {
+                  id(kind) = id(woke) ? demo::WAKE : demo::PARTIAL;
+                }
+                id(woke) = false;
+                id(started) = millis();
+            - component.update: epd
+            - wait_until:
+                condition:
+                  not:
+                    epaper_spi.is_updating: epd
+            - lambda: |-
+                if (!id(measuring))
+                  return;
+                id(last_ms) = millis() - id(started);
+                id(last_kind) = id(kind);
+                ESP_LOGI("demo", "kind %d took %u ms", id(kind), (unsigned) id(last_ms));
+
+binary_sensor:
+  - platform: gpio
+    id: dial_up
+    pin: { number: GPIO6, inverted: true, allow_other_uses: true }
+    filters: [delayed_on: 20ms]
+    on_press:
+      - lambda: demo::count()++;
+      - script.execute: { id: request, grey: false }
+  - platform: gpio
+    id: dial_down
+    pin: { number: GPIO4, inverted: true, allow_other_uses: true }
+    filters: [delayed_on: 20ms]
+    on_press:
+      - lambda: demo::count()--;
+      - script.execute: { id: request, grey: false }
+  - platform: gpio
+    id: dial_press
+    pin: { number: GPIO5, inverted: true, allow_other_uses: true }
+    filters: [delayed_on: 20ms]
+    on_press:
+      - lambda: |-
+          id(seven) = !id(seven);
+          id(epd).set_grey_levels(id(seven) ? 7 : 4);
+      - script.execute: { id: request, grey: true }
+  - platform: gpio
+    id: menu
+    pin: { number: GPIO2, inverted: true, allow_other_uses: true }
+    filters: [delayed_on: 20ms]
+    on_press:
+      - script.execute: { id: request, grey: true }
+  - platform: gpio
+    id: exit_button
+    pin: { number: GPIO1, inverted: true, allow_other_uses: true }
+    filters: [delayed_on: 20ms]
+    on_press:
+      # Held low, the button would wake the board straight away.
+      - wait_until:
+          condition:
+            binary_sensor.is_off: exit_button
+          timeout: 3s
+      - lambda: id(asleep) = true;
+      - script.execute: { id: request, grey: false }
+      - delay: 50ms
+      - script.wait: pump
+      - deep_sleep.enter: sleeper
+
+font:
+  - { file: "gfonts://Inter@700", id: f_count, size: 160, bpp: 2, glyphs: ["0123456789-"] }
+  - { file: "gfonts://Inter@600", id: f_text, size: 22, bpp: 2, glyphsets: [GF_Latin_Core] }
+  - { file: "gfonts://Inter@500", id: f_small, size: 17, bpp: 2, glyphsets: [GF_Latin_Core] }
+
+display:
+  - platform: crowpanel_579
+    id: epd
+    grey: true
+    grey_levels: 7
+    full_update_every: 255
+    lambda: |-
+      it.fill(Color::WHITE);
+      it.printf(175, 164, id(f_count), Color::BLACK, TextAlign::BASELINE_CENTER, "%d", demo::count());
+
+      // Seven bars from black to white; with four greys some pairs come out the same.
+      for (int i = 0; i < 7; i++) {
+        const uint8_t v = i * 255 / 6;
+        it.filled_rectangle(380 + i * 56, 24, 56, 160, Color(v, v, v));
+      }
+      it.rectangle(379, 23, 394, 162, Color::BLACK);
+      it.print(380, 216, id(f_text), Color::BLACK, TextAlign::BASELINE_LEFT, id(seven) ? "Seven greys" : "Four greys");
+
+      const float s = id(last_ms) / 1000.0f;
+      if (id(asleep))
+        it.print(20, 216, id(f_text), Color::BLACK, TextAlign::BASELINE_LEFT, "Asleep");
+      else if (id(last_kind) == demo::PARTIAL)
+        it.printf(20, 216, id(f_text), Color::BLACK, TextAlign::BASELINE_LEFT, "Partial in %.2f s", s);
+      else if (id(last_kind) == demo::GREY)
+        it.printf(20, 216, id(f_text), Color::BLACK, TextAlign::BASELINE_LEFT, "Grey in %.2f s", s);
+      else if (id(last_kind) == demo::WAKE)
+        it.printf(20, 216, id(f_text), Color::BLACK, TextAlign::BASELINE_LEFT, "Woke, partial in %.2f s", s);
+
+      it.print(20, 258, id(f_small), Color::BLACK, TextAlign::BASELINE_LEFT,
+               "Dial  count       Press  4 or 7 greys       Menu  grey refresh       Exit  sleep 10 s");
