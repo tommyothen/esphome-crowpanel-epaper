@@ -186,15 +186,20 @@ and 0.67. The panel's black reflects 0.08 of its white. The waveforms are the on
 has not moved: the yardstick has.
 
 The four greys stay as they are: one frame of white at 50 Hz, anywhere in group 3, moves dark
-grey 0.13 and light grey 0.08 (to 0.39 and 0.70), more than they are out. A faked 11 °C (37.5
+grey 0.13 and light grey 0.08 (to 0.39 and 0.70), more than they are out.
+
+The re-base, the same day, on both panels. Here the seven greys' middle pass ends dark grey on a
+frame of black more (group 3's phase D) and the half steps trim with 2 frames, not 1: the seven
+read 0.01, 0.18, 0.37, 0.54, 0.69, 0.83 and 1.00. The ticks' curves were measured afresh in L* at
+the scans' VCOM, their stops moved to 20 and 245 to keep 64 frames each way, and the glide table
+took three rounds against exact refreshes (0.088 out on average at first, then 0.057, then 0.041;
+0.035 gliding back). A box taken black and back by ticks once, and five times, came out 0.009 and
+0.019 whiter than the white beside it. The 4.2"'s are in its notes. A faked 11 °C (37.5
 Hz) took the seven greys lighter still, to 0.29, 0.57, 0.73, 0.83 and 0.90 in codes, so the
 room's 12 °C is not the cause.
 
 ## Still open
 
-- Re-base the greys, glides and ticks on perceptual lightness (below). This panel's seven greys
-  are its darks most out, so they would move most, and its glides and ticks, tuned to land on
-  them, with them.
 - Thirteen greys: two more half-step passes, quarter steps, each band with its
   own length. One length for every band crosses the levels over.
 - A faster grey: shortening group 2 and nudging its phases to win the greys
@@ -221,7 +226,8 @@ room's 12 °C is not the cause.
   and a moving ball's trail ghosting: the model had them white long before they were.
 - **Glides.** The table read from those curves landed 0.084 off on average against an exact
   refresh of the same grid; two rounds of tuning on the camera, weighing the glide back from
-  each glided level too, brought it to 0.056 out and 0.055 back. A full refresh afterwards
+  each glided level too, brought it to 0.056 out and 0.055 back on the camera's codes (0.041
+  and 0.035 in L* after the re-base below). A full refresh afterwards
   left every cell within 0.035. Black takes 66 frames and white 90, so a glide may push up to
   96 frames, in up to seven scans.
 - **Ticks.** 8 frames, not 4: this panel's ticks wait on drawing and planning (about 60 ms)

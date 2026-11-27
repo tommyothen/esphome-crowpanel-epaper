@@ -34,7 +34,7 @@ whether it needs greys.
 | Fast partials (`grey_partials: false`, default) | Clocks, counters, minute dashboards, button and dial input | 0.4 to 0.5 s (5.79") or 0.44 s (4.2"); cold partial after wake 1.3 s or 0.98 s. No flash | 54 KB / 30 KB RAM for balance tracking | Changed pixels show B&W until the next full refresh (or `request_grey_partial()` on 4.2"); full-refresh blacks clear only to grey; each push is out of balance until cancelled or settled |
 | `grey_partials: true` (4.2" only) | Menus or dashboards where changed regions must keep exact greys without flashing the rest | About 3.75 s slow, or 2.3 s with `fast_greys: true` (7 greys). Flashes only the changed window; rest holds within 0.01 | `crowpanel_42`, `grey: true`, PSRAM (60 KB) | As slow as a full grey refresh; changes far apart redraw everything between them in one rectangle |
 | Fast partials + `request_grey_partial()` (4.2" only) | Interactive screens that answer quickly on input, then clean up once still | 0.44 s per press, then one windowed grey refresh after a delay | `crowpanel_42`, `grey: true`, PSRAM | Single rectangle around everything changed; your YAML script triggers the settle |
-| `grey_partials: glide` | Dashboards or UI updates with greys where flashing is unwelcome | Box in 0.32 to 0.38 s (4.2") or 0.5 s (5.79"); whole panel 0.93 s or 1.3 s. No flash | `grey: true`, PSRAM (about 330 KB on 4.2", 610 KB on 5.79") | Greys land near, not exact (about 0.04 out on 4.2", 0.055 on 5.79") until the next grey refresh; power loss or reflashing mid-flight loses the drive record |
+| `grey_partials: glide` | Dashboards or UI updates with greys where flashing is unwelcome | Box in 0.32 to 0.38 s (4.2") or 0.5 s (5.79"); whole panel 0.93 s or 1.3 s. No flash | `grey: true`, PSRAM (about 330 KB on 4.2", 610 KB on 5.79") | Greys land near, not exact (about 0.04 out on both, in perceptual lightness) until the next grey refresh; power loss or reflashing mid-flight loses the drive record |
 | `grey_partials: live` | Short bursts of motion, sliding items in and holding them, live indicators | 23 to 27 ticks/s (4.2") or 14 to 16 ticks/s (5.79"). No flash; ink takes 0.3 to 0.5 s to settle | `grey: true`, PSRAM (about 330 KB on 4.2", 610 KB on 5.79") | Every tick is a real refresh (50,400 to 57,600/h on 5.79", 82,800 to 97,200/h on 4.2"); skips `full_update_every`; power loss or reflashing loses the drive record; never leave running unattended |
 | `crowpanel_579_turbo`, `crowpanel_42_turbo` | Bench experiments only | Full 7 greys in 0.9 s (4.2") or 1.4 s (5.79"); B&W frame in 0.46 s or 0.67 to 0.87 s | `grey: true`, PSRAM, base board component listed | No charge balance: builds image retention on still pictures and may shorten panel life. Faint white ghost on 4.2"; darkest grey lands near black on 5.79". Never use on a display you rely on |
 
@@ -98,7 +98,7 @@ PSRAM, while the panel's own RAM holds the previous frame.
 | Partial, first after boot or wake | about 1.3 s | Black and white, 25 frames each way, charge balanced, changed rows only; greys elsewhere survive (the panel's OTP partial fades them) |
 | Partial, subsequent | 0.4 to 0.5 s | 15-frame one-way push with per-pixel balance tracking, changed rows only |
 | Partial, nothing changed | about 50 ms | Drawing only; the panel is not driven |
-| Glide (`grey_partials: glide`) | about 0.5 s for a box, 1.3 s whole panel | No flash: each changed pixel goes straight to its new grey, within about 0.055 on average; the next full refresh settles them |
+| Glide (`grey_partials: glide`) | about 0.5 s for a box, 1.3 s whole panel | No flash: each changed pixel goes straight to its new grey, within about 0.04 on average (0.12 at worst); the next full refresh settles them |
 | Live (`grey_partials: live`) | 14 to 16 ticks a second for a clock, a ball and a ticker | 8-frame ticks nudging pixels towards the latest frame; ticks on until everything arrives |
 
 The 5.79"'s glides and live ticks run at 195 Hz, its controllers' fastest rate,
@@ -129,14 +129,14 @@ use an SSD1683 and are not supported yet.
 | Mode | Time (50 Hz, 11 °C) | Behaviour |
 |---|---|---|
 | Full black and white (`grey: false`) | 1.15 to 1.3 s | Balanced, Elecrow's 20/10/20 waveform |
-| Full four greys (`grey: true`) | about 3.7 s | Even thirds: measured 0.00, 0.33, 0.70 and 0.95 |
-| Full seven greys (`grey_levels: 7`) | about 3.95 s | Measured 0.00, 0.18, 0.34, 0.49, 0.69, 0.84 and 1.00 |
+| Full four greys (`grey: true`) | about 3.7 s | Measured 0.03, 0.33, 0.74 and 0.98 in L* |
+| Full seven greys (`grey_levels: 7`) | about 3.95 s | Measured 0.01, 0.16, 0.34, 0.46, 0.67, 0.84 and 0.99 in L* |
 | Fast greys (`fast_greys: true`) | about 2.0 s four or seven | Two shakes and a push at 100 Hz: about twice as quick, erasing the picture before as well (within 0.09) |
 | Partial, first after boot or wake | about 0.98 s | Black and white, 25 frames each way, charge balanced |
 | Partial, subsequent | about 0.44 s | 12-frame one-way push with per-pixel balance tracking |
 | Partial, nothing changed | about 0.09 s | Drawing only; the panel is not driven |
 | Grey partial (`grey_partials: true`) | about 3.75 s slow, 2.3 s fast (7 greys) | Greys in the changed window only; outside holds within 0.01 |
-| Glide (`grey_partials: glide`) | 0.32 to 0.38 s for a box, 0.93 s whole panel | No flash: each changed pixel goes straight to its new grey, within about 0.04 on average (0.13 at worst) |
+| Glide (`grey_partials: glide`) | 0.32 to 0.38 s for a box, 0.93 s whole panel | No flash: each changed pixel goes straight to its new grey, within about 0.04 on average (0.11 at worst) |
 | Live (`grey_partials: live`) | 23 ticks a second for a clock and a bouncing ball | 4-frame ticks at 200 Hz nudging pixels towards the latest frame; ticks on until everything arrives |
 
 ```yaml
@@ -187,8 +187,8 @@ Both boards share `grey_partials: glide` and `grey_partials: live` through
 - **Glide (`grey_partials: glide`).** Walks each changed pixel straight from its
   old grey to its new one in binary-weighted scans, with no flash: a box in
   0.32 to 0.38 s on the 4.2" (0.93 s whole panel) and about 0.5 s on the 5.79"
-  (1.3 s whole panel). Greys land near enough (about 0.04 out on average on the
-  4.2", 0.055 on the 5.79") and settle exactly at the next grey refresh (full,
+  (1.3 s whole panel). Greys land near enough (about 0.04 out on average on
+  both) and settle exactly at the next grey refresh (full,
   or `request_grey_partial()` on the 4.2").
 - **Live (`grey_partials: live`).** Each update is one short tick pushing pixels
   towards the latest frame (4 frames at 200 Hz on the 4.2", 8 frames at 195 Hz
@@ -552,11 +552,13 @@ Both test cards need no network: flash and read logs over USB with
   uncancelled and forces a full refresh on the next wake. Reflashing or cutting
   power while glides or live ticks have unpaid drive loses the PSRAM record;
   that drive stays on the glass until later refreshes clear it.
-- **Greys tuned on a camera.** Every grey, glide and tick was tuned on a laptop
-  camera's readings at a fixed exposure. Measured as perceptual lightness
-  instead, both panels' dark greys sit light: the 5.79"'s seven greys by up to
-  0.16 of the black to white range, the 4.2"'s by 0.09. See "Measuring greys"
-  in [docs/crowpanel-579.md](docs/crowpanel-579.md#measuring-greys).
+- **Greys measured on a camera.** Greys, glides and ticks are tuned in
+  perceptual lightness (CIE L*) from photos at four exposures, with the
+  camera's response fitted, so the numbers here are what an eye sees as even
+  steps, within about 0.04. The 4.2"'s four-grey light grey sits 0.07 light,
+  and the 5.79"'s four greys 0.07 and 0.05 dark: one frame, the finest step
+  there, moves them further. See "Measuring greys" in
+  [docs/crowpanel-579.md](docs/crowpanel-579.md#measuring-greys).
 - **CrowPanel 4.2".** V1.0 boards (SSD1683) are not supported, and its frame
   rate by temperature borrows the 5.79" panel's maker's curve until checked in
   a warm room.

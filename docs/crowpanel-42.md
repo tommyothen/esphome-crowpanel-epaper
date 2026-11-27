@@ -217,6 +217,21 @@ Also checked on the panel:
 - **The watchdog.** With BUSY stuck, an update gives up after 20 s, resets the controller and
   sets the warning; the next update tries again.
 
+## In perceptual lightness
+
+Re-measured on 2026-11-27 in CIE L* from photos at four exposures (see "Measuring greys" in
+[the 5.79" notes](crowpanel-579.md#measuring-greys)), the greys tuned on the camera's codes read
+light in the darks: seven at 0.25, 0.41, 0.54, 0.71 and 0.83, four at 0.41 and 0.73. Each dark
+table now ends on 2 frames of black before its white rather than 1, and the half steps trim with
+2 frames: the seven read 0.01, 0.16, 0.34, 0.46, 0.67, 0.84 and 0.99, the four 0.03, 0.33, 0.74
+and 0.98. A frame of black before light grey's last white took it to 0.60, so it stays a touch
+light; 6 frames rather than 5 for level 3's half step took it to 0.56. The fast greys already
+read 0.00, 0.21, 0.36, 0.49, 0.68, 0.82 and 0.99 (four: 0.36 and 0.72) and are unchanged.
+
+The ticks' curves were measured afresh in L* (black ticks fall slower there than the codes said:
+0.67 after 12 frames, not 0.52), and the glide table took three rounds against exact refreshes:
+0.074 out on average at first, then 0.044, then 0.036, and 0.035 gliding back.
+
 ## Turbo
 
 Measured at about 11 °C with seven greys, against the balanced driver's own white and black (1
@@ -261,9 +276,6 @@ ghost is the old black squares' reading less the old white squares'; "later" is 
 
 ## Still open
 
-- Re-base the greys, glides and ticks on perceptual lightness: see "Measuring greys" in
-  [the 5.79" notes](crowpanel-579.md#measuring-greys). Read that way, this panel's seven greys
-  are 0.25, 0.41, 0.54, 0.71 and 0.83 and its four 0.41 and 0.73, the darks up to 0.09 light.
 - Check the frame-rate curve in a warm room: it borrows the 5.79" panel's maker's.
 - Fast greys erase the picture before as well as the slow ones in half the time; once they have
   had more use, they could be the default.

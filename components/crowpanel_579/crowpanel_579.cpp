@@ -136,9 +136,12 @@ static constexpr PartialWaveform PARTIAL{};
 // The seven-grey refresh's middle pass: the four-grey waveform with its dark and light tables
 // driven less. The level a table lands on hangs on its last few frames: on the camera, the dark
 // table with 15 frames of black drive lands at 0.46, and the same with 2 more frames of black at
-// the very end at 0.12. Here dark grey is level 1 of the seven, 0.20: 15 frames, then 4 frames of
-// black and 2 back to white at the end, balanced by a frame of white either side of the shake's
-// white. Light grey is level 4, 0.72: 10 frames of black drive, balanced by 10 of white first.
+// the very end at 0.12. Here dark grey is level 1 of the seven: 15 frames, then 4 frames of black,
+// 2 back to white and 1 more of black at the end (group 3's phase D, a frame idling in the other
+// tables), balanced by 3 frames of white before the shake. Without that last frame of black it
+// landed 0.15 light in L*. Light grey is level 4: 10 frames of black drive, balanced by 10 of
+// white first; a last frame of black took it 0.19 darker, too far, so the half steps' trim
+// brings it down instead.
 struct EvenGreyWaveform {
   uint8_t bytes[233];
   constexpr EvenGreyWaveform() : bytes() {
@@ -147,15 +150,18 @@ struct EvenGreyWaveform {
     constexpr int BW = 84, WB = 126;  // the light and dark tables
     // Phases A to D of groups 0 to 3, each table: VSS, VSH1 (0x40) or VSL (0x80), and the length.
     constexpr uint8_t dark[4][4] = {
-        {0x0A, 0x1B, 0x8F, 0x03}, {0x4A, 0x81, 0x8A, 0x81}, {0x48, 0x83, 0x82, 0x04}, {0x04, 0x44, 0x82, 0x00}};
+        {0x0A, 0x1B, 0x8F, 0x83}, {0x4A, 0x01, 0x8A, 0x01}, {0x48, 0x83, 0x82, 0x04}, {0x04, 0x44, 0x82, 0x41}};
     constexpr uint8_t light[4][4] = {
-        {0x8A, 0x1B, 0x0F, 0x03}, {0x4A, 0x01, 0x8A, 0x01}, {0x48, 0x03, 0x82, 0x84}, {0x04, 0x04, 0x02, 0x00}};
+        {0x8A, 0x1B, 0x0F, 0x03}, {0x4A, 0x01, 0x8A, 0x01}, {0x48, 0x03, 0x82, 0x84}, {0x04, 0x04, 0x02, 0x01}};
     for (int g = 0; g < 4; g++) {
       for (int p = 0; p < 4; p++) {
         bytes[WB + g * 7 + 1 + p] = dark[g][p];
         bytes[BW + g * 7 + 1 + p] = light[g][p];
       }
     }
+    // Group 3's phase D, a frame, idles in the other tables.
+    for (int t : {0, 42, 168})
+      bytes[t + 3 * 7 + 4] = 0x01;
   }
 };
 static constexpr EvenGreyWaveform EVEN_GREY{};
@@ -163,16 +169,15 @@ static constexpr EvenGreyWaveform EVEN_GREY{};
 // The seven-grey refresh's outer passes: a half step, towards black before the middle pass and
 // towards white after it, so the two cancel. The pixel's two RAM bits say which: level 2 (and
 // white, which a push and a pull leave white) from dark grey (WB), level 3 from dark grey (BW),
-// level 5 from light grey (WW), or for levels 0, 1 and 4, a one-frame trim (BB), towards white
-// before and towards black after, which takes level 1 from 0.19 to 0.17 and light grey from 0.70
-// to 0.64, and leaves black black. They run at 125 Hz, 8 ms a frame, since a single 20 ms frame
-// moves a grey too far: at room temperature 2, 4 and 3 frames land levels 2, 3 and 5 at 0.30,
-// 0.50 and 0.82. The middle pass runs faster in the warm and slower in the cold, so these scale
-// with it, one set of lengths for each band; the trim stays a frame.
+// level 5 from light grey (WW), or for levels 0, 1 and 4, a trim (BB), towards white before and
+// towards black after, which takes level 1 and light grey down, light grey the more, and leaves
+// black black. They run at 125 Hz, 8 ms a frame, since a single 20 ms frame moves a grey too far:
+// at 12 °C, 2, 4 and 3 frames and a trim of 2 land the seven at 0.01, 0.18, 0.37, 0.54, 0.69, 0.83
+// and 1.00 in L*. The middle pass runs faster in the warm and slower in the cold, so these scale
+// with it, one set of lengths for each band.
 struct HalfStepWaveform {
   uint8_t bytes[233];
-  constexpr HalfStepWaveform(bool white, uint8_t level_2, uint8_t level_3, uint8_t level_5) : bytes() {
-    constexpr uint8_t TRIM = 1;
+  constexpr HalfStepWaveform(bool white, uint8_t level_2, uint8_t level_3, uint8_t level_5, uint8_t trim) : bytes() {
     // Phase A is level 2's length; B and C add what levels 3 and 5 need beyond it.
     const uint8_t shorter = level_3 < level_5 ? level_3 : level_5, longer = level_3 < level_5 ? level_5 : level_3;
     const uint8_t lengths[3] = {level_2, static_cast<uint8_t>(shorter - level_2),
@@ -184,11 +189,11 @@ struct HalfStepWaveform {
       bytes[t * 42] = 1;
       for (int p = 0; p < 3; p++)
         bytes[t * 42 + 1 + p] = (((phases_of_table[t] >> p) & 1) ? drive : 0) | lengths[p];
-      bytes[t * 42 + 4] = TRIM;  // phase D: the trim, driven only in BB
+      bytes[t * 42 + 4] = trim;  // phase D: the trim, driven only in BB
       bytes[t * 42 + 5] = 1;
       bytes[t * 42 + 6] = 1;
     }
-    bytes[4 * 42 + 4] = (white ? 0x40 : 0x80) | TRIM;  // BB: towards white before, black after
+    bytes[4 * 42 + 4] = (white ? 0x40 : 0x80) | trim;  // BB: towards white before, black after
     bytes[224] = 0x05;  // 125 Hz
     for (int i = 227; i < 233; i++)
       bytes[i] = GREY_LUT[i];
@@ -196,9 +201,9 @@ struct HalfStepWaveform {
 };
 // For the temperature bands at 37.5, 50, 75 and 100 Hz: the room-temperature lengths scaled.
 static constexpr HalfStepWaveform HALF_TO_BLACK[4] = {
-    {false, 3, 5, 4}, {false, 2, 4, 3}, {false, 1, 3, 2}, {false, 1, 2, 2}};
+    {false, 3, 5, 4, 3}, {false, 2, 4, 3, 2}, {false, 1, 3, 2, 1}, {false, 1, 2, 2, 1}};
 static constexpr HalfStepWaveform HALF_TO_WHITE[4] = {
-    {true, 3, 5, 4}, {true, 2, 4, 3}, {true, 1, 3, 2}, {true, 1, 2, 2}};
+    {true, 3, 5, 4, 3}, {true, 2, 4, 3, 2}, {true, 1, 3, 2, 1}, {true, 1, 2, 2, 1}};
 
 // The waveforms of an active spell, while updates come quickly: group 0 only, with phases A to C
 // of the given lengths and, for each table, the level in each phase (0 none, 1 VSH1, black,
@@ -265,36 +270,41 @@ static SimpleWaveform reset_waveform(uint8_t far, uint8_t white, uint8_t black) 
   return wave;
 }
 
-// Glides and ticks, at 195 Hz, measured on this panel at about 20 °C, whose ink moves at roughly
-// two thirds the 4.2"'s pace. From a settled white (the panel's own full refresh), 6, 12, 18, 24,
-// 30, 36, 48, 60 and 72 frames of black given as binary digits left 0.89, 0.67, 0.53, 0.37, 0.30,
-// 0.24, 0.12, 0.08 and 0.05; from a settled black, as much white 0.08, 0.23, 0.39, 0.57, 0.72,
-// 0.76, 0.84, 0.89 and 0.92. The glide table reads those backwards, black 66 frames and white 90.
+// Glides and ticks, at 195 Hz, whose ink moves at roughly two thirds the 4.2"'s pace. Levels are
+// perceptual (CIE L*, 0 black and 1 white), read from photos at four exposures with the camera's
+// response fitted (docs/crowpanel-579.md, "Measuring greys"), at 12 °C. From a settled white (the
+// panel's own full refresh), 6, 12, 18, 24, 30, 36, 48, 60 and 72 frames of black given as binary
+// digits left 0.96, 0.84, 0.72, 0.55, 0.44, 0.34, 0.17, 0.09 and 0.05; from a settled black, as
+// much white 0.14, 0.29, 0.45, 0.61, 0.74, 0.76, 0.85, 0.91 and 0.93. The glide table was read from
+// such curves, black 66 frames and white 90, then tuned on the camera in three rounds against exact
+// refreshes of the same cells: 0.041 out on average, 0.035 gliding back from a glided level.
 // Ticks are 8 frames, not the 4.2"'s 4: this panel's ticks wait on drawing and planning, not on
-// the refresh, so 8 frames cost nothing more and push twice as far. Streams of them left 0.67,
-// 0.42, 0.26, 0.19, 0.13, 0.10, 0.05 and 0.02 after 8, 16, 24, 32, 40, 48, 64 and 72 frames, and
-// 0.12, 0.37, 0.61, 0.76, 0.84, 0.88, 0.96 and 1.00 the other way.
+// the refresh, so 8 frames cost nothing more and push twice as far. Streams of them left 0.89,
+// 0.67, 0.47, 0.34, 0.24, 0.17, 0.08 and 0.02 after 8, 16, 24, 32, 40, 48, 64 and 72 frames, and
+// 0.23, 0.52, 0.72, 0.82, 0.88, 0.91, 0.96 and 1.00 the other way. They stop black at 20 and white
+// at 245 of 255, 64 frames each way; a box taken black and back by ticks once, and five times, came
+// out 0.009 and 0.019 whiter than the white beside it.
 //
 // Turbo's reset is 96 frames, a guess from the ink's pace against the 4.2"'s, measured once: over
 // a checkerboard, ghosts of 0.01 on white and black and greys within 0.04 of each other, the
 // darkest at 0.04 for 0.17 (the balanced refresh's greys were 0.18 out at worst the same night).
 static constexpr CrowPanel579::GlideTuning GLIDES{
     {
-        {0, -5, -11, -19, -26, -40, -90},
-        {23, 0, -4, -7, -14, -25, -80},
-        {39, 10, 0, -3, -7, -19, -74},
-        {47, 18, 9, 0, -3, -13, -68},
-        {54, 22, 16, 7, 0, -7, -62},
-        {58, 22, 14, 11, 7, 0, -43},
-        {66, 38, 23, 16, 11, 7, 0},
+        {0, -3, -9, -13, -22, -36, -90},
+        {23, 0, -4, -6, -12, -23, -80},
+        {39, 18, 0, -3, -6, -13, -74},
+        {47, 25, 12, 0, -4, -10, -68},
+        {54, 35, 19, 11, 0, -6, -62},
+        {58, 45, 25, 17, 10, 0, -43},
+        {66, 48, 34, 24, 17, 13, 0},
     },
     8,
-    13,
+    20,
     245,
     96,
-    {{0, .99f}, {8, .67f}, {16, .42f}, {24, .26f}, {32, .19f}, {40, .13f}, {48, .10f}, {56, .075f}, {64, .05f},
-     {72, .02f}, {96, .01f}},
-    {{0, .00f}, {8, .12f}, {16, .37f}, {24, .61f}, {32, .76f}, {40, .84f}, {48, .88f}, {56, .92f}, {64, .96f},
+    {{0, 1.0f}, {8, .89f}, {16, .67f}, {24, .465f}, {32, .34f}, {40, .24f}, {48, .17f}, {56, .125f}, {64, .08f},
+     {72, .02f}, {96, .0f}},
+    {{0, .0f}, {8, .23f}, {16, .52f}, {24, .725f}, {32, .82f}, {40, .88f}, {48, .91f}, {56, .935f}, {64, .96f},
      {72, 1.0f}, {96, 1.0f}},
 };
 
