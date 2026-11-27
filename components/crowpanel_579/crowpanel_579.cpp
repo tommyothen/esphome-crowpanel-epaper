@@ -245,6 +245,26 @@ static SimpleWaveform scan_waveform(uint8_t frames) {
   return scan;
 }
 
+// Turbo's reset: one refresh, with the planes saying each pixel's push. From the far end, black on
+// BW and white on WB for `far` frames; already there, white on WW for `white` and black on BB for
+// `black`. The phases end where the touch-ups do, so none passes 63 frames while `far` is at most
+// 126 and the longer touch-up at least half of it.
+static SimpleWaveform reset_waveform(uint8_t far, uint8_t white, uint8_t black) {
+  const uint8_t first = std::min(white, black), second = std::max(white, black);
+  const uint8_t lengths[3] = {first, static_cast<uint8_t>(second - first), static_cast<uint8_t>(far - second)};
+  const uint8_t ends[3] = {first, second, far};
+  uint8_t levels[5][3]{};
+  for (int p = 0; p < 3; p++) {
+    levels[1][p] = ends[p] <= white ? 2 : 0;
+    levels[2][p] = 1;
+    levels[3][p] = 2;
+    levels[4][p] = ends[p] <= black ? 1 : 0;
+  }
+  SimpleWaveform wave{lengths, levels};
+  wave.bytes[232] = SCAN_VCOM;
+  return wave;
+}
+
 // Glides and ticks, at 195 Hz, measured on this panel at about 20 °C, whose ink moves at roughly
 // two thirds the 4.2"'s pace. From a settled white (the panel's own full refresh), 6, 12, 18, 24,
 // 30, 36, 48, 60 and 72 frames of black given as binary digits left 0.89, 0.67, 0.53, 0.37, 0.30,
@@ -254,6 +274,10 @@ static SimpleWaveform scan_waveform(uint8_t frames) {
 // the refresh, so 8 frames cost nothing more and push twice as far. Streams of them left 0.67,
 // 0.42, 0.26, 0.19, 0.13, 0.10, 0.05 and 0.02 after 8, 16, 24, 32, 40, 48, 64 and 72 frames, and
 // 0.12, 0.37, 0.61, 0.76, 0.84, 0.88, 0.96 and 1.00 the other way.
+//
+// Turbo's reset is 96 frames, a guess from the ink's pace against the 4.2"'s, measured once: over
+// a checkerboard, ghosts of 0.01 on white and black and greys within 0.04 of each other, the
+// darkest at 0.04 for 0.17 (the balanced refresh's greys were 0.18 out at worst the same night).
 static constexpr CrowPanel579::GlideTuning GLIDES{
     {
         {0, -5, -11, -19, -26, -40, -90},
@@ -267,6 +291,7 @@ static constexpr CrowPanel579::GlideTuning GLIDES{
     8,
     13,
     245,
+    96,
     {{0, .99f}, {8, .67f}, {16, .42f}, {24, .26f}, {32, .19f}, {40, .13f}, {48, .10f}, {56, .075f}, {64, .05f},
      {72, .02f}, {96, .01f}},
     {{0, .00f}, {8, .12f}, {16, .37f}, {24, .61f}, {32, .76f}, {40, .84f}, {48, .88f}, {56, .92f}, {64, .96f},
@@ -413,7 +438,7 @@ void CrowPanel579::set_ram_area_(bool left, uint16_t first_y, uint16_t end_y) {
 // else, already hold what is on the glass. Cancelling and settling send the rows with a pixel out of
 // balance. Every other pass sends both planes whole.
 void CrowPanel579::start_pass_(Pass pass) {
-  if (pass == Pass::DOSE || pass == Pass::UNDOSE) {
+  if (is_scan(pass)) {
     // The controllers have no partial window and drive every pixel, so a scan sends the rows its
     // masks are in, and those the last scans left masks in, which get the glass's reading back
     // and so hold.
@@ -610,8 +635,12 @@ void CrowPanel579::refresh_screen(bool partial) {
       this->load_waveform_(CORRECTION.bytes, FRAMES_50_HZ);
       break;
     // These balance on their own, or, the half steps, within one update.
-    case Pass::PARTIAL:
-      this->load_waveform_(PARTIAL.bytes, this->frame_rate_);
+    case Pass::PARTIAL:  // turbo pushes one way even from cold
+      if (this->balanced_) {
+        this->load_waveform_(PARTIAL.bytes, this->frame_rate_);
+      } else {
+        this->load_waveform_(ONE_WAY.bytes, FRAMES_50_HZ);
+      }
       break;
     case Pass::GREY:
       this->load_waveform_(GREY_LUT, this->frame_rate_);
@@ -627,7 +656,11 @@ void CrowPanel579::refresh_screen(bool partial) {
       break;
     case Pass::DOSE:
     case Pass::UNDOSE:
-      this->load_waveform_(scan_waveform(this->scan_frames_[this->pass_index_]).bytes, FRAMES_195_HZ);
+    case Pass::RESET:
+      this->load_waveform_(pass == Pass::RESET
+                               ? reset_waveform(this->reset_.far, this->reset_.white, this->reset_.black).bytes
+                               : scan_waveform(this->scan_frames_[this->pass_index_]).bytes,
+                           FRAMES_195_HZ);
       this->command(0x20);
       this->prerender_();
       return;

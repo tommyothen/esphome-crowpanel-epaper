@@ -9,6 +9,7 @@ HMI boards. Tested with ESPHome 2026.10.
 |---|---|---|---|
 | CrowPanel 5.79" | 792x272 | `crowpanel_579` | Ready |
 | CrowPanel 4.2" V1.2 (UC8276C) | 400x300 | `crowpanel_42` | Ready |
+| Either, without charge balance | | `crowpanel_579_turbo`, `crowpanel_42_turbo` | Experimental; see [Turbo](#turbo) |
 
 Both build on `crowpanel_epaper`, which holds what they share: the buffer and its
 levels, the planes made from it, the record of what the glass shows and of which
@@ -305,7 +306,59 @@ Wait for `epaper_spi.is_updating` to clear before entering deep sleep. If the
 ESP32 sleeps part way through an update, panel RAM may no longer match the
 glass, so the driver makes the next update a full one.
 
+## Turbo
+
+`crowpanel_579_turbo` and `crowpanel_42_turbo` are the same drivers with charge
+balance switched off, at the same voltages. They are for experiments: every
+refresh leaves its drive on the panel, which shows as image retention and may
+shorten the panel's life. Keep a display you rely on on the balanced platform.
+Each takes its board's options, needs `grey: true`, and needs its board's
+component listed too, alongside the minimal configuration's:
+
+```yaml
+external_components:
+  - source: github://tommyothen/crowpanel-epaper@<a full commit SHA or a tag>
+    components: [crowpanel_42_turbo, crowpanel_42, crowpanel_epaper]
+
+display:
+  - platform: crowpanel_42_turbo
+    grey: true
+```
+
+A turbo full refresh is one push of every pixel to black or white, as far as it
+has to go, then the greys dosed from white as a glide would. From the far end a
+pixel gets the tuning's reset (64 frames on the 4.2", 96 on the 5.79"); a white
+or grey that is already white, half of that; a black already black,
+three-eighths. The planes tell the controller which of those four each pixel
+is, so the reset is one refresh of its longest push. Nothing is recorded,
+cancelled or settled: partials push one way even from cold, glides never stop
+to settle, and a deep sleep needs no settling first. On the 4.2", a grey
+partial is a turbo refresh of its window. Its live ticks run as fast as
+balanced ones, which were already at the refresh's limit.
+
+Measured on the bench against the balanced platforms, with 0 the balanced
+refresh's black and 1 its white, each picture drawn over a checkerboard:
+
+| | 4.2" balanced | 4.2" turbo | 5.79" balanced | 5.79" turbo |
+|---|---|---|---|---|
+| Full refresh, seven greys | 3.9 s | 0.9 s | 4.5 s | 1.4 s |
+| Full refresh, black and white | 3.9 s | 0.46 s | 4.4 s | 0.67 s |
+| White | 1.00 | 1.02 to 1.07 | 1.00 | 0.99 to 1.01 |
+| Ghost of the checkerboard on white | 0.00 | 0.05, 0.03 after 12 s | 0.00 | 0.01 |
+| Ghost on black | 0.00 | 0.00 | 0.015 | 0.01 |
+| Greys apart by what was there before | 0.03 | 0.03 | 0.07 | 0.04 |
+
+The cost shows on a picture that stays put: a hundred turbo refreshes of the
+checkerboard in a row on the 4.2" left a ghost of 0.12 on the white after it,
+and 0.02 under the balanced platform's refreshes after that, which faded to
+0.004 within 13 minutes. The measurements are in
+[docs/crowpanel-42.md](docs/crowpanel-42.md) and [docs/crowpanel-579.md](docs/crowpanel-579.md).
+
 ## Looking after the panel
+
+On the turbo platforms, only the discharge and wind-down, VCOM's null, the
+watchdog and boot reset, temperature compensation and periodic full refreshes
+apply. Nothing is balanced, cancelled or settled.
 
 - **Charge-balanced waveforms.** The cold partial, four-grey and seven-grey
   waveforms give every pixel equal frames at +15 V and -15 V on every refresh,

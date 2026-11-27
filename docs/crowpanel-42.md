@@ -216,6 +216,48 @@ Also checked on the panel:
 - **The watchdog.** With BUSY stuck, an update gives up after 20 s, resets the controller and
   sets the warning; the next update tries again.
 
+## Turbo
+
+Measured at about 11 °C with seven greys, against the balanced driver's own white and black (1
+and 0). Each test draws white, black, then white, black and the seven-grey ramp each over a
+checkerboard, so every frame holds pixels that were black next to pixels that were white. The
+ghost is the old black squares' reading less the old white squares'; "later" is 12 s on.
+
+| Turbo full refresh | Time, black and white / greys | White ghost, later | Black ghost | Greys apart |
+|---|---|---|---|---|
+| Balanced driver, for comparison | 3.9 s / 3.9 s | 0.000 | 0.002 | 0.03 |
+| Every pixel 64 frames | 0.45 s / 0.90 s | -0.039 | -0.020 | 0.17 |
+| 64 from the far end, 8 already there, in binary scans | 0.73 s / 1.18 s | +0.044 | +0.005 | 0.06 |
+| The same, 24 already there | 0.73 s / 1.18 s | +0.036, +0.016 | 0.001 | 0.04 |
+| The same, 40 already there | 0.73 s / 1.18 s | -0.034, -0.020 | -0.012 | 0.11 |
+| One refresh: 64 far, 32 white, 24 black (the driver's) | 0.46 s / 0.91 s | +0.049, +0.029 | 0.000 | 0.03 |
+| The same, white 40 | 0.46 s / 0.91 s | +0.043, +0.024 | 0.001 | 0.04 |
+| The same, white 48 | 0.46 s / 0.91 s | +0.033, +0.016 | 0.001 | 0.05 |
+| White 8 frames black, then 23 white | 0.46 s / 0.91 s | +0.054, +0.034 | 0.002 | 0.03 |
+| White 15 black, then 46 white | 0.46 s / 0.91 s | -0.027, -0.016 | 0.004 | 0.09 |
+| 48 far, 30 white, 18 black | 0.38 s / 0.83 s | +0.036, +0.020 | 0.007 | 0.05 |
+| 96 far, binary scans | 1.11 s / 1.56 s | +0.042 | -0.001 | 0.12 |
+
+- **Pushing everything as hard over-pushes what is already there.** With every pixel at 64
+  frames, the greys drawn over the old white squares came out up to 0.17 lighter than those
+  over the old black: a white pushed further into white resists the dose that follows. Pushing
+  each pixel only as far as it has to go fixed the greys.
+- **The ink does not add frames up.** As binary scans, 24 frames (16 and 8) and 32 (one scan)
+  left the same white, and 40 (32 and 8) a much deeper one: each separate push counts for more
+  than its frames. A reset temperature-scaled to 61 or 63 frames went out as six scans and cost
+  0.3 s more. One refresh whose planes pick each pixel's waveform (BW and WB from the far end,
+  WW and BB already there) is both faster and steadier.
+- **The white ghost is the far end's deeper white.** A pixel arriving from black lands at 1.06
+  and settles towards 1.04; a white touched up lands about 1.02. A longer touch-up, or a kick
+  of black first, evens the white, but the greys share WW's waveform and split apart, and only
+  a white that has travelled gets as deep: 31 frames of touch-up left 1.02, 23 of black and 38
+  of white 1.085.
+- **Retention.** A hundred turbo refreshes of the checkerboard in a row, about 50 s: on the
+  turbo white after it, a ghost of 0.05, then 0.12 after 12 s as the soaked white sagged to
+  0.92. The balanced driver flashed on 1.5 minutes later showed 0.020, and 0.013 after three
+  refreshes; 13 minutes after the soak, 0.004.
+- **Live.** The live demo runs at 26 to 27 ticks a second, as balanced.
+
 ## Still open
 
 - Check the frame-rate curve in a warm room: it borrows the 5.79" panel's maker's.

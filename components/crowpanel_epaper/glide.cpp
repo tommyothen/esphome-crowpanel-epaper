@@ -139,11 +139,11 @@ bool CROWPANEL_FAST CrowPanelBase::plan_glide_() {
       const uint8_t to = this->level_at_(this->pixels_, x, y);
       const int drive = this->drive_[i];
       int dose = this->doses_[this->level_at_(this->shown_, x, y)][to];
-      if (to == 0 && dose > 0)
+      if (this->balanced_ && to == 0 && dose > 0)
         dose = std::min(MAX_DOSE, std::max(dose, -drive));
-      if (to == 6 && dose < 0)
+      if (this->balanced_ && to == 6 && dose < 0)
         dose = std::max(-MAX_DOSE, std::min(dose, -drive));
-      if (std::abs(drive + dose) > MAX_DRIVE) {
+      if (this->balanced_ && std::abs(drive + dose) > MAX_DRIVE) {
         this->glide_overflowed_ = true;
         return false;
       }
@@ -164,8 +164,9 @@ bool CROWPANEL_FAST CrowPanelBase::plan_glide_() {
 
 // A pass for each binary digit of `bits`, the shortest first.
 void CrowPanelBase::plan_scans_(Pass pass, uint8_t bits) {
-  if (pass == Pass::UNDOSE)
+  if (pass == Pass::UNDOSE) {
     ESP_LOGV(TAG, "Cancelling glides' drive in scans of 0x%02X frames", bits);
+  }
   for (int k = 0; k < 8 && this->pass_count_ < sizeof this->passes_; k++) {
     if ((bits >> k) & 1) {
       this->passes_[this->pass_count_] = pass;
@@ -233,7 +234,7 @@ void HOT CROWPANEL_FAST CrowPanelBase::build_masks_(Pass pass, uint8_t frames) {
 
 // After the last pass: a glide adds its doses to the window's drive, and cancelling clears it.
 void CROWPANEL_FAST CrowPanelBase::record_drive_(Pass last) {
-  if (this->drive_ == nullptr)
+  if (this->drive_ == nullptr || !this->balanced_)
     return;
   const bool glide = last == Pass::DOSE, cancelled = this->passes_[0] == Pass::UNDOSE;
   if (!glide && !cancelled)
@@ -273,6 +274,79 @@ void CrowPanelBase::estimate_levels_() {
       this->estimate_[y * this->width_ + x] = LEVEL_LIGHT[this->level_at_(this->shown_, x, y)];
   }
   this->estimate_valid_ = true;
+}
+
+// Turbo: one refresh pushing each of the window's pixels to black (level 0) or white (the rest) by
+// how far it has to go, then the greys dosed from white. A pixel coming from the other end, or
+// from a grey at least halfway along its glide, gets the tuning's reset frames; one already there,
+// or nearer, a touch-up of half of them for white and three-eighths for black. All of them get the
+// whole reset when the driver does not know what is shown. Pushing a pixel that is already there
+// as hard as one that is not leaves it harder to move and its greys come out light; too little and
+// it is not as white. The planes say which of the four each pixel is (build_reset_masks_), so the
+// reset costs one refresh of its longest push. Needs the glide buffers.
+bool CROWPANEL_FAST CrowPanelBase::plan_turbo_(bool greys) {
+  if (this->glide_tuning_() == nullptr || !this->glide_buffers_())
+    return false;
+  if (this->push_ == nullptr) {
+    RAMAllocator<uint8_t> allocator;
+    this->push_ = reinterpret_cast<int8_t *>(allocator.allocate(this->width_ * this->height_));
+    if (this->push_ == nullptr)
+      return false;
+  }
+  this->set_doses_();
+  // At most 126, so the far push past the white touch-up fits a waveform's phase of 63.
+  const float far = std::clamp(this->glide_tuning_()->reset_frames / this->speed_(), 8.0f, 126.0f);
+  this->reset_ = {static_cast<uint8_t>(std::lround(far)), static_cast<uint8_t>(std::lround(far / 2)),
+                  static_cast<uint8_t>(std::lround(far * 3 / 8))};
+  this->passes_[this->pass_count_++] = Pass::RESET;
+  uint8_t dose_bits = 0;
+  if (greys) {
+    const Window &w = this->window_;
+    for (size_t y = w.first_row; y <= w.last_row; y++) {
+      for (size_t x = w.first_bank * 8u; x != (w.last_bank + 1u) * 8u; x++) {
+        const uint8_t level = this->level_at_(this->pixels_, x, y);
+        const int dose = level == 0 || level == 6 ? 0 : this->doses_[6][level];
+        this->push_[y * this->width_ + x] = static_cast<int8_t>(dose);
+        dose_bits |= dose;
+      }
+    }
+    this->plan_scans_(Pass::DOSE, dose_bits);
+  }
+  this->turbo_full_ = true;
+  ESP_LOGV(TAG, "Turbo refresh of x %u to %u, y %u to %u: reset %u, %u and %u frames, greys in scans of 0x%02X",
+           (unsigned) this->window_.first_bank * 8, (unsigned) this->window_.last_bank * 8 + 7,
+           (unsigned) this->window_.first_row, (unsigned) this->window_.last_row, this->reset_.far,
+           this->reset_.white, this->reset_.black, dose_bits);
+  return true;
+}
+
+// A turbo reset's masks over the window: from the far end to black on BW and to white on WB, a
+// touch-up to white on WW and to black on BB.
+void HOT CROWPANEL_FAST CrowPanelBase::build_reset_masks_() {
+  this->clear_masks_();
+  uint8_t *old_plane = this->masks_, *new_plane = this->masks_ + this->bit_plane_;
+  const Window &w = this->window_;
+  for (size_t y = w.first_row; y <= w.last_row; y++) {
+    for (size_t bank = w.first_bank; bank <= w.last_bank; bank++) {
+      uint8_t old_bits = 0xFF, new_bits = 0xFF;
+      for (size_t j = 0; j != 8; j++) {
+        const size_t x = bank * 8 + j;
+        const bool black = this->level_at_(this->pixels_, x, y) == 0;
+        const int to = black ? 0 : 6;
+        const bool far = !this->shown_valid_ ||
+                         2 * std::abs(this->doses_[this->level_at_(this->shown_, x, y)][to]) >=
+                             std::abs(this->doses_[6 - to][to]);
+        const uint8_t bit = 0x80 >> j;
+        if (black)
+          new_bits &= ~bit;
+        if (black != far)
+          old_bits &= ~bit;
+      }
+      old_plane[y * this->plane_row_ + bank] = old_bits;
+      new_plane[y * this->plane_row_ + bank] = new_bits;
+    }
+  }
+  this->masked_ = w;
 }
 
 // Lightness after a curve's frames, and the frames to a lightness, linear between the points.
@@ -481,9 +555,11 @@ void HOT CROWPANEL_FAST CrowPanelBase::tick_rows_(TickRows &rows, const Window &
           now = this->tick_white_[now];
           rows.whites++;
         }
-        rows.driven -= drive != 0;
-        drive += step;
-        rows.driven += drive != 0;
+        if (this->balanced_) {  // turbo keeps no record, so nothing to pay back and no limit
+          rows.driven -= drive != 0;
+          drive += step;
+          rows.driven += drive != 0;
+        }
         const int next = this->decide_(now, to, drive);
         if (next != 0 && std::abs(drive + next * this->tick_frames_) <= MAX_DRIVE)
           moving = 1;

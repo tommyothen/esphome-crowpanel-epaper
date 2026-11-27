@@ -276,6 +276,15 @@ static constexpr SimpleWaveform SETTLE{
 // 0.14 and 0.11 after 4, 8, 12, 16, 20, 24, 32, 40 and 48 frames; from a settled black, 0.11, 0.26,
 // 0.46, 0.64, 0.75, 0.82, 0.90, 0.93 and 0.96. (Refreshes of 2 frames reached 0.18 and 0.95, of 8
 // frames 0.03 and 1.03.) Past 48 frames the curves are extrapolated.
+//
+// Turbo's reset is 64 frames. Drawn over a checkerboard, against the balanced refresh's white and
+// black: white at 1.02 to 1.07, the old black squares whitest, a ghost of 0.05 fading to 0.03 in
+// 12 s (none with the balanced refresh); black at 0.01 with no ghost; greys within 0.06 of their
+// levels and 0.03 of each other whatever was there before. 48 frames left the same ghost and
+// greys 0.05 apart, 96 greys 0.12 apart. Touching up a white already there for longer, or after
+// a kick of black, evened the white but split the greys, which share its waveform. A hundred
+// turbo refreshes of a checkerboard in a row left a ghost of 0.12, and 0.02 under the balanced
+// refresh after, which faded to 0.004 within 13 minutes.
 static constexpr CrowPanel42::GlideTuning GLIDES{
     {
         {0, -5, -11, -17, -20, -25, -48},
@@ -289,6 +298,7 @@ static constexpr CrowPanel42::GlideTuning GLIDES{
     4,
     0,
     255,
+    64,
     {{0, .99f}, {4, .89f}, {8, .70f}, {12, .52f}, {16, .40f}, {20, .31f}, {24, .25f}, {32, .18f}, {40, .14f},
      {48, .11f}, {64, .08f}},
     {{0, .03f}, {4, .11f}, {8, .26f}, {12, .46f}, {16, .64f}, {20, .75f}, {24, .82f}, {32, .90f}, {40, .93f},
@@ -301,6 +311,25 @@ static constexpr uint8_t FRAMES_200_HZ = 0x1F;
 static SimpleWaveform scan_waveform(uint8_t frames) {
   const uint8_t a = frames > 63 ? frames / 2 : frames, b = static_cast<uint8_t>(frames - a);
   return SimpleWaveform{{a, b, 0}, {{0}, {0}, {1, 1}, {2, 2}, {0}}};
+}
+
+// Turbo's reset: one refresh, with the planes saying each pixel's push. From the far end, black on
+// BW and white on WB for `far` frames; already there, white on WW for `white` and black on BB for
+// `black`. The phases end where the touch-ups do, so none passes 63 frames while `far` is at most
+// 126 and the longer touch-up at least half of it.
+static SimpleWaveform reset_waveform(uint8_t far, uint8_t white, uint8_t black) {
+  const uint8_t first = std::min(white, black), second = std::max(white, black);
+  const uint8_t lengths[3] = {first, static_cast<uint8_t>(second - first), static_cast<uint8_t>(far - second)};
+  const uint8_t ends[3] = {first, second, far};
+  uint8_t levels[5][3]{};
+  for (int p = 0; p < 3; p++) {
+    levels[1][p] = ends[p] <= white ? 2 : 0;
+    levels[2][p] = 1;
+    levels[3][p] = 2;
+    levels[4][p] = ends[p] <= black ? 1 : 0;
+  }
+  SimpleWaveform wave{lengths, levels};
+  return wave;
 }
 
 // The net drive a waveform leaves on pixels using table t, in frames: VSH counts one way and VSL
@@ -428,6 +457,8 @@ bool CrowPanel42::plan_own_update_() {
     this->window_ = this->dirty_;
   merge(this->window_, this->dirty_);
   this->windowed_ = true;
+  if (!this->balanced_ && this->plan_turbo_(true))
+    return true;  // turbo: the window reset and its greys dosed from white
   if (this->driven_count_ != 0)
     this->plan_scans_(Pass::UNDOSE, this->drive_bits_());
   if (this->unsettled_in_window_())
@@ -449,7 +480,7 @@ void CrowPanel42::start_pass_(Pass pass) {
     shown_rows_valid = false;
   // A scan sends only its window, in partial mode, where writes fill the window, and leaves its
   // masks there.
-  if (pass == Pass::DOSE || pass == Pass::UNDOSE) {
+  if (is_scan(pass)) {
     this->send_window_();
     merge(this->stale_, this->window_);
   }
@@ -458,7 +489,7 @@ void CrowPanel42::start_pass_(Pass pass) {
 // Out of partial mode before any plane is written: in it, writes wrap within the window.
 void CrowPanel42::pass_finished_() {
   const Pass pass = this->passes_[this->pass_index_];
-  if (this->windowed_ || pass == Pass::DOSE || pass == Pass::UNDOSE)
+  if (this->windowed_ || is_scan(pass))
     this->command(0x92);
 }
 
@@ -760,7 +791,8 @@ void CrowPanel42::refresh_screen(bool partial) {
   }
   if (this->pass_index_ == 0)
     this->set_frame_rates_();
-  switch (this->passes_[this->pass_index_]) {
+  const Pass pass = this->passes_[this->pass_index_];
+  switch (pass) {
     // A fast partial's push may be cancelled hours later at another temperature, so the push, its
     // cancelling and its settling always run at 50 Hz: a frame's drive has to match exactly.
     case Pass::FAST:
@@ -770,8 +802,12 @@ void CrowPanel42::refresh_screen(bool partial) {
       this->load_waveform_(CORRECTION.bytes, FRAMES_50_HZ);
       break;
     // These balance on their own, or, the half steps, within one update.
-    case Pass::PARTIAL:
-      this->load_waveform_(PARTIAL.bytes, this->frame_rate_);
+    case Pass::PARTIAL:  // turbo pushes one way even from cold
+      if (this->balanced_) {
+        this->load_waveform_(PARTIAL.bytes, this->frame_rate_);
+      } else {
+        this->load_waveform_(ONE_WAY.bytes, FRAMES_50_HZ);
+      }
       break;
     case Pass::BLACK_WHITE:
       this->load_waveform_(BLACK_WHITE.bytes, this->frame_rate_);
@@ -800,7 +836,11 @@ void CrowPanel42::refresh_screen(bool partial) {
     // it is cancelled. They are already in partial mode.
     case Pass::DOSE:
     case Pass::UNDOSE:
-      this->load_waveform_(scan_waveform(this->scan_frames_[this->pass_index_]).bytes, FRAMES_200_HZ);
+    case Pass::RESET:
+      this->load_waveform_(pass == Pass::RESET
+                               ? reset_waveform(this->reset_.far, this->reset_.white, this->reset_.black).bytes
+                               : scan_waveform(this->scan_frames_[this->pass_index_]).bytes,
+                           FRAMES_200_HZ);
       this->command(0x12);
       this->next_delay_ = 2;
       this->prerender_();

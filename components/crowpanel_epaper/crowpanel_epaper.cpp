@@ -268,6 +268,7 @@ void CrowPanelBase::plan_update_() {
   this->unchanged_ = false;
   this->ticking_ = false;
   this->live_update_ = false;
+  this->turbo_full_ = false;
   this->plan_started_();
   if (this->update_count_ != 0 && this->plan_tick_())
     return;  // a tick records itself as it plans
@@ -280,8 +281,14 @@ void CrowPanelBase::plan_update_() {
     if (!planned && this->glide_overflowed_ && !this->settles_windows_())
       this->update_count_ = 0;
   }
+  // Turbo's full refresh: a reset and greys dosed from white over the whole panel.
+  if (this->update_count_ == 0 && !this->balanced_) {
+    this->window_ = this->whole_window_();
+    if (this->plan_turbo_(this->grey_))
+      planned = true;
+  }
   // A full refresh cancels every glide's drive first.
-  if (this->update_count_ == 0 && this->driven_count_ != 0) {
+  if (!planned && this->update_count_ == 0 && this->driven_count_ != 0) {
     this->window_ = this->whole_window_();
     this->plan_scans_(Pass::UNDOSE, this->drive_bits_());
   }
@@ -312,7 +319,7 @@ void CrowPanelBase::plan_update_() {
   this->estimate_valid_ = false;  // ticks model the levels afresh from the frame this one draws
   // Scans follow each other closely, so the main loop runs unpaced until the update ends.
   const Pass *passes = this->passes_, *end = passes + this->pass_count_;
-  if (std::find(passes, end, Pass::DOSE) != end || std::find(passes, end, Pass::UNDOSE) != end)
+  if (std::any_of(passes, end, is_scan))
     this->fast_loop_.start();
 }
 
@@ -338,7 +345,9 @@ bool CrowPanelBase::transfer_data() {
       return true;
     this->pass_started_ = true;
     const Pass pass = this->passes_[this->pass_index_];
-    if ((pass == Pass::DOSE || pass == Pass::UNDOSE) && !this->ticking_)
+    if (pass == Pass::RESET)
+      this->build_reset_masks_();
+    else if (is_scan(pass) && !this->ticking_)
       this->build_masks_(pass, this->scan_frames_[this->pass_index_]);
     this->start_pass_(pass);
   }
@@ -357,6 +366,7 @@ bool CrowPanelBase::transfer_data() {
       return this->send_planes_(Source{nullptr, this->unsettled_}, Source{nullptr, this->glass_});
     case Pass::DOSE:
     case Pass::UNDOSE:
+    case Pass::RESET:
       return this->send_own_planes_(this->passes_[this->pass_index_]);
   }
   return true;
@@ -384,11 +394,15 @@ void CrowPanelBase::power_off() {
   const Pass *passes = this->passes_, *end = passes + this->pass_count_;
   this->record_glass_(last == Pass::FAST, std::find(passes, end, Pass::CORRECT) != end);
   // A scan leaves masks in the planes; the reading goes back when something else needs it.
-  this->copying_ = last != Pass::DOSE && this->copies_after_(last);
+  this->copying_ = !is_scan(last) && this->copies_after_(last);
   if (this->copying_)
     this->stale_ = EMPTY_WINDOW;
   this->record_drive_(last);
-  if (last == Pass::DOSE) {
+  if (this->turbo_full_) {
+    this->drew_(this->window_);  // turbo drew its window, which covers everything dirty
+    this->shown_valid_ = true;
+    this->dirty_ = EMPTY_WINDOW;
+  } else if (last == Pass::DOSE) {
     this->drew_window_();  // a glide drew the frame near enough
   } else if ((last == Pass::GREY || last == Pass::HALF_TO_WHITE) && this->shown_ != nullptr) {
     memcpy(this->shown_, this->pixels_, this->buffer_length_);
@@ -419,7 +433,7 @@ void CROWPANEL_FAST CrowPanelBase::record_glass_rows_(uint16_t first, uint16_t e
         unsettled[i] = 0;
       if (fast && glass[i] != row[i])
         this->reading_changed_(y, i);
-      if (fast)
+      if (fast && this->balanced_)
         unsettled[i] ^= glass[i] ^ row[i];
       glass[i] = row[i];
     }

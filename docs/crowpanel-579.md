@@ -167,6 +167,9 @@ Each frame is about 20 ms. None of them left a ghost of the frame before.
 
 ## Still open
 
+- Re-measure the seven greys since the grey refresh's white went deeper. On 2026-11-27, drawn
+  over a checkerboard, they read 0.00, 0.24 to 0.27, 0.43 to 0.50, 0.64 to 0.68, 0.77 to 0.79,
+  0.84 to 0.86 and 1.00 against 0.17, 0.33, 0.50, 0.67 and 0.83: up to 0.18 light.
 - Thirteen greys: two more half-step passes, quarter steps, each band with its
   own length. One length for every band crosses the levels over.
 - A faster grey: shortening group 2 and nudging its phases to win the greys
@@ -216,3 +219,23 @@ Each frame is about 20 ms. None of them left a ghost of the frame before.
   0x50 0.14; the untouched white had drifted 0.016 darker over 45 s of ticking and now holds.
   With all three, one crossing left +0.004 and three +0.017.
 
+## Turbo
+
+One light run, the same test as the 4.2"'s (see its notes), at the default 96 frames from the
+far end, 48 for a white already there and 36 for a black. Against the balanced driver's white
+and black:
+
+| | Balanced | Turbo |
+|---|---|---|
+| Full refresh, black and white | 4.4 to 4.6 s | 0.67 to 0.87 s |
+| Full refresh, seven greys | 4.5 s | 1.4 s |
+| White ghost, 12 s later | -0.004, -0.005 | +0.010, +0.012 |
+| Black ghost | -0.015 | -0.008 |
+| Greys | 0.01, 0.24 to 0.27, 0.43 to 0.50, 0.64 to 0.68, 0.77 to 0.79, 0.84 to 0.86, 1.00 | 0.00 to 0.02, 0.02 to 0.06, 0.30 to 0.33, 0.42 to 0.44, 0.67 to 0.69, 0.80 to 0.84, 0.94 to 0.98 |
+
+The darkest grey lands near black: a freshly reset white takes black faster than the settled
+white the glides were measured from. A second run with its own doses from white (31, 22, 15, 11
+and 7 frames rather than the glides' 38, 23, 16, 11 and 7) took level 3 to 0.50 but left levels
+1 and 2 at 0.04 and 0.08 to 0.15, one frame fewer making level 2 darker: on this panel the
+binary scans' order and the holds after them count for more than the frames, which a light run
+cannot untangle. The driver keeps the glides' doses.

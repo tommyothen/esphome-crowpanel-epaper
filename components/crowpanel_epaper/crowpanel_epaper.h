@@ -96,6 +96,11 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   // itself while anything is still on its way or the picture keeps changing, drawing the next
   // frame while the panel runs the last. Greys land as near as a glide's. Needs grey.
   void set_live(bool live);
+  // Turbo: no charge balance. A full refresh is one push of every pixel to black or white, as far as
+  // it has to go, then the greys dosed from white, five to eight times faster; nothing is recorded,
+  // cancelled or settled. Every refresh leaves its drive on the panel, which shows as image
+  // retention and may shorten the panel's life: for experiments, not for a display left running.
+  void set_balanced(bool balanced) { this->balanced_ = balanced; }
 
   // A window of the panel: rows down, and across in plane bytes, 8 pixels each.
   struct Window {
@@ -116,6 +121,9 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
     // How far ticks take black and white, 0 to 255: as far as they go (0 and 255) where both
     // saturate, else matched depths, so the way back pays the drive back.
     uint8_t black_stop, white_stop;
+    // Turbo's full refresh: frames pushing a pixel from one end to the other, at the glides'
+    // temperature.
+    uint8_t reset_frames;
     float tick_black[11][2], tick_white[11][2];
   };
 
@@ -139,7 +147,9 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
     HALF_TO_WHITE,
     DOSE,           // a glide's scan, or a tick, pushing each pixel part way to its new grey
     UNDOSE,         // one of the scans cancelling glides' drive before a grey refresh
+    RESET,          // turbo: one refresh pushing every pixel in the window to black or white
   };
+  static bool is_scan(Pass pass) { return pass == Pass::DOSE || pass == Pass::UNDOSE || pass == Pass::RESET; }
 
   // The controllers, which a board's driver supplies.
   // Send the planes from plane_ on, old then new, in slices; true once they are all out.
@@ -229,6 +239,9 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   // Called by a driver at the end of an update: whether ticking goes on, and if so arranges it.
   bool continue_live_();
   void settle_glides_now_();
+  // Turbo: the window reset to black and white, then its greys dosed from white.
+  bool plan_turbo_(bool greys);
+  void build_reset_masks_();
   // What a tick's pass over rows first to end of its window found.
   struct TickRows {
     uint16_t first, end;
@@ -280,11 +293,18 @@ class CrowPanelBase : public epaper_spi::EPaperBase {
   // NEW, a bit a pixel each, holding (both white) everywhere outside the window.
   bool glide_{false};
   bool live_{false};
+  bool balanced_{true};
+  bool turbo_full_{false};            // this update is a turbo refresh of window_
+  // Turbo's reset this update: frames from the far end, and the touch-ups for white and black.
+  struct Reset {
+    uint8_t far, white, black;
+  };
+  Reset reset_{};
   int8_t *drive_{nullptr};
   uint32_t driven_count_{0};
   int8_t doses_[7][7]{};
   int8_t *push_{nullptr};
-  uint8_t scan_frames_[16]{};         // each DOSE or UNDOSE pass's frames
+  uint8_t scan_frames_[16]{};         // each scan's frames
   uint8_t *masks_{nullptr};
   Window masked_{EMPTY_WINDOW};       // where masks_ holds anything but holding
   Window stale_{EMPTY_WINDOW};        // where the panel's planes hold masks, not the reading
