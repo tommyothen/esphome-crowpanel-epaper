@@ -1,0 +1,58 @@
+name: Bug report
+description: Something on the panel, or in the build, is not right.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. The more of the below you can fill in, the sooner I can reproduce it.
+  - type: dropdown
+    id: board
+    attributes:
+      label: Board
+      options:
+        - CrowPanel 5.79"
+        - CrowPanel 4.2" V1.2
+    validations:
+      required: true
+  - type: input
+    id: driver
+    attributes:
+      label: Driver version
+      description: The release tag or commit in your `external_components` source.
+      placeholder: v2.0.0
+    validations:
+      required: true
+  - type: input
+    id: esphome
+    attributes:
+      label: ESPHome version
+      placeholder: 2026.10.2
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Display config
+      description: Your `display:` block, and anything that drives it (buttons, scripts, `lvgl:`). Leave out any secrets.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The log around the problem, over USB or the API. Lines such as "Display update took" help.
+      render: text
+  - type: textarea
+    id: photo
+    attributes:
+      label: Photo of the panel
+      description: Optional, but most e-paper problems are easier to see than to describe. Drag a photo in here.

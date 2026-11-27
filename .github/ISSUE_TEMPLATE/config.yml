@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Have a 4.2" V1.0?
+    url: https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2
+    about: The V1.0 has a different controller, an SSD1683, which these drivers cannot run. ESPBoards' component supports it.
+  - name: Want a driver built around LVGL?
+    url: https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2
+    about: ESPHome's own LVGL works with these drivers in short tests (see the guide). ESPBoards' component is built around it, though I have not tested it.

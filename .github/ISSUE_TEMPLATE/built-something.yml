@@ -1,0 +1,45 @@
+name: I built or ported something
+description: Share a port to another framework, to have it listed in the docs, or something you made with these drivers.
+title: "Built: "
+labels: [documentation]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for sharing it. Ports to other frameworks go in the docs so other CrowPanel owners can find them, and I would love to see anything else you have made.
+  - type: input
+    id: link
+    attributes:
+      label: Link
+      description: Where the code or the project lives.
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is it?
+      options:
+        - A port to another framework
+        - Something made with these drivers
+    validations:
+      required: true
+  - type: input
+    id: framework
+    attributes:
+      label: Framework
+      description: For a port, what it runs on, such as ESP-IDF, Arduino or MicroPython.
+  - type: checkboxes
+    id: boards
+    attributes:
+      label: Boards
+      options:
+        - label: CrowPanel 5.79"
+        - label: CrowPanel 4.2" V1.2
+        - label: Another board
+  - type: textarea
+    id: works
+    attributes:
+      label: What works
+      description: For a port, which modes work (greys, fast partials, glides, live). Otherwise a line or two about what you made, and a photo if you have one.
+    validations:
+      required: true
