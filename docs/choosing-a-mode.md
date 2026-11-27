@@ -43,6 +43,11 @@ watch.
   2.3 s. Flashes.
 - **Watch:** nothing much: it erases the picture before as well as the slow
   greys do, each grey within 0.09.
+- **Why only the 4.2":** it is a waveform of its own, two shakes and one push in
+  place of Waveshare's many shakes, tuned frame by frame on the 4.2"'s ink. The
+  5.79"'s ink moves at about two thirds of that pace, so it needs its own
+  tuning, which has not been done; its grey refresh already shakes once rather
+  than Waveshare's five times.
 
 ## Fast partials
 
