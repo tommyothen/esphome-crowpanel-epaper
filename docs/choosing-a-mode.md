@@ -14,6 +14,14 @@ watch.
   the 4.2". Flashes.
 - **Needs:** nothing extra; fast partials take 54 KB (5.79") or 30 KB (4.2") of RAM.
 - **Watch:** no greys, so no anti-aliased text.
+- **Over Elecrow's own code:** on the 5.79" the full refresh is the panel's own,
+  as in Elecrow's demos, but the partials are not. The panel's own partial
+  drives every pixel, so greys fade a little with each one (eleven took a light
+  grey nearly to white). This driver's partials push only the pixels that change,
+  record each push and pay it back, send only the rows that changed, and skip
+  the refresh when nothing has. On the 4.2" the full refresh is Elecrow's waveform,
+  run with VCOM at the null measured on the panel (-1.4 V): Elecrow's -0.6 V
+  lightened greys on every frame and left a DC bias.
 
 ## Four greys
 
