@@ -32,7 +32,7 @@ needs no BOOT button.
 
 ```yaml
 external_components:
-  - source: github://tommyothen/crowpanel-epaper@0a17723f4748257bb40ea4a55352615feaf6924f  # a full commit SHA or a tag
+  - source: github://tommyothen/crowpanel-epaper@25006da249991be4cb9eb68e37f439088105b337  # a full commit SHA or a tag
     components: [crowpanel_579, crowpanel_epaper]  # crowpanel_epaper is the core both boards share
 
 esp32:
