@@ -8,7 +8,7 @@ All pins default to the boards' fixed wiring, which the two share.
 |---|---|---|
 | `grey` | `false` | Full refreshes in four greys (about 4.2 s on 5.79", 3.7 s on 4.2") instead of black and white |
 | `grey_levels` | `4` | `4` or `7`. `7` runs three passes with a half step between each of the four greys (4.4 to 4.5 s on 5.79", 3.95 s on 4.2"); needs `grey: true` |
-| `grey_partials` | `false` | `glide`: no-flash glides to the new grey. `live`: continuous ticks towards the latest frame, for things that move. On `crowpanel_42`, also `true` for windowed grey partials (`crowpanel_579` rejects `true`). Needs `grey: true` and PSRAM |
+| `grey_partials` | `false` | `glide`: no-flash glides to the new grey. `live`: continuous ticks towards the latest frame, for things that move. On `crowpanel_42`, also `true` for windowed grey partials (`crowpanel_579` rejects `true`: its controllers have no partial window). Needs `grey: true` and PSRAM |
 | `temperature_sensor` | none | Sensor ID for panel temperature in °C. On 5.79", switches self-balanced waveforms across temperature bands (without one, 50 Hz, 13 to 20 °C). On 4.2", overrides the panel's own sensor |
 | `full_update_every` | `30` | Updates per full refresh (`1` to `255`); `1` makes every update full. Live ticks do not increment this count |
 | `update_interval` | `never` | Most devices decide for themselves when to draw |
@@ -28,7 +28,16 @@ All pins default to the boards' fixed wiring, which the two share.
 | `fast_greys` | `false` | Grey refreshes in two shakes and a push at 100 Hz: about 2.0 s for four or seven greys, and grey partials likewise; needs `grey: true` |
 
 `id(epd).request_grey_partial()` and `id(epd).panel_temperature()` are the
-4.2"'s own calls.
+4.2"'s own calls. Why only the 4.2":
+
+- **`fast_greys`** is a waveform tuned frame by frame on the 4.2"'s ink. The
+  5.79"'s ink moves at about two thirds of that pace, so it needs its own
+  tuning, which has not been done.
+- **`request_grey_partial()`** refreshes a window of the panel in greys. The
+  5.79"'s SSD1683s have no partial window: every refresh drives every pixel.
+- **`panel_temperature()`** reads the controller's own sensor back over the SPI
+  data line. The 5.79"'s controllers could answer the same way, but that read
+  has not been built for them yet.
 
 `crowpanel_579_turbo` and `crowpanel_42_turbo` take their board's options and
 require `grey: true`.

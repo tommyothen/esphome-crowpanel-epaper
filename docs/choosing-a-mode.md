@@ -9,7 +9,9 @@ watch.
 
 `grey: false`, the default.
 
-- **For:** plain black and white, or the quickest full refresh on the 4.2".
+- **For:** plain black and white, or the quickest full refresh on the 4.2",
+  which runs Elecrow's one-second waveform where the 5.79" uses its panel's own,
+  slower but adjusted for temperature by the panel itself.
 - **Full refresh:** about 3.7 s on the 5.79" (the panel's own), 1.15 to 1.3 s on
   the 4.2". Flashes.
 - **Needs:** nothing extra; fast partials take 54 KB (5.79") or 30 KB (4.2") of RAM.
@@ -81,6 +83,9 @@ The default between full refreshes (`grey_partials: false`).
 - **Needs:** PSRAM (60 KB).
 - **Watch:** as slow as a grey refresh, and changes far apart redraw everything
   between them in one rectangle.
+- **Why only the 4.2":** its controller can refresh just a window of the panel.
+  The 5.79"'s two SSD1683s have no partial window: every refresh drives every
+  pixel, so a grey refresh there always flashes the whole panel.
 
 ## Fast partials, then a grey partial (4.2" only)
 
@@ -92,6 +97,8 @@ Fast partials, with `request_grey_partial()` once input stops.
 - **Needs:** PSRAM.
 - **Watch:** one rectangle around everything changed, and your YAML decides
   when to settle (see the [guide](guide.md)).
+- **Why only the 4.2":** the settle is a grey partial, which needs the partial
+  window the 5.79" lacks (see above).
 
 ## Glides
 
@@ -150,4 +157,6 @@ Fast partials, with `request_grey_partial()` once input stops.
   refreshes on the 5.79" after one.
 - **Temperature.** Without a `temperature_sensor`, the 5.79"'s waveforms assume
   13 to 20 °C at 50 Hz; give it a sensor if the room runs much warmer or colder.
-  The 4.2" reads its own panel's temperature.
+  The 4.2" reads its own panel's temperature back from its controller over the
+  SPI data line. The 5.79"'s controllers could answer the same way, but that
+  read has not been built for them yet.

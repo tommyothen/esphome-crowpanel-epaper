@@ -39,7 +39,9 @@ use an SSD1683 and are not supported yet.
 - **The panel's own temperature.** The driver reads it through a 3-wire
   half-duplex SPI read each time the supplies come on, so it needs no
   `temperature_sensor`, and steps its frame rate smoothly in 5 Hz steps from
-  50 Hz at 11 °C; `id(epd).panel_temperature()` returns it in °C.
+  50 Hz at 11 °C; `id(epd).panel_temperature()` returns it in °C. The 5.79"'s
+  controllers could be read the same way, but that read has not been built
+  for them yet, so the 5.79" takes a `temperature_sensor` instead.
 - **VCOM at its null.** Measured on the panel, at -1.4 V a frame driving nothing
   leaves greys as they are. Elecrow's -0.6 V lightened them on every such frame
   and left a DC bias on waveforms balanced by frame count.
@@ -66,10 +68,13 @@ display:
       it.print(20, 20, id(font), Color::BLACK, "Hello");
 ```
 
-The UC8276C adds two capabilities the 5.79" does not have:
+The 4.2" has two things the 5.79" does not: the first because its controller
+can do something the SSD1683 cannot, the second because it has not been done on
+the 5.79" yet.
 
 - **Grey partials (`grey_partials: true`) and `request_grey_partial()`.** The
-  controller can confine a refresh to a partial window, so `grey_partials: true`
+  UC8276C can confine a refresh to a partial window, which the 5.79"'s SSD1683s
+  cannot: every refresh there drives every pixel. So `grey_partials: true`
   redraws only the rectangle around what changed in greys, flashing only it. It
   takes as long as a grey refresh and works across deep sleep: the driver keeps
   a hash of each row's levels in RTC memory (1.2 KB), so after a wake it
@@ -93,7 +98,8 @@ script:
   pushes once instead of Waveshare's many shakes, cutting four or seven greys
   from 3.7 or 3.95 s to about 2.0 s, and grey partials likewise. Drawn over
   every other grey, both fast and slow greys leave each grey within 0.09 of its
-  target.
+  target. They were tuned frame by frame on this panel's ink; the 5.79"'s moves
+  at about two thirds of the pace, so it needs its own tuning, not yet done.
 
 Notes and measurements are in [the 4.2" notes](crowpanel-42.md).
 
