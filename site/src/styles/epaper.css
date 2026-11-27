@@ -1,50 +1,167 @@
-/* The e-paper look: paper and ink by day, ink-black paper by night, and the panels' seven
-   greys along the top. Overrides Starlight's colour properties (see its style/props.css). */
-
-:root[data-theme='light'] {
-  --sl-color-white: #1d1d1b;
-  --sl-color-gray-1: #2a2926;
-  --sl-color-gray-2: #3a3833;
-  --sl-color-gray-3: #5a5750;
-  --sl-color-gray-4: #8a877f;
-  --sl-color-gray-5: #bdb9af;
-  --sl-color-gray-6: #dad6cc;
-  --sl-color-gray-7: #e6e3da;
-  --sl-color-black: #eeece6;
-  --sl-color-accent-low: #dad6cc;
-  --sl-color-accent: #1d1d1b;
-  --sl-color-accent-high: #1d1d1b;
-  --sl-color-text-accent: #1d1d1b;
-  --sl-color-bg-nav: #eeece6;
-  --sl-color-bg-sidebar: #eeece6;
-  --sl-color-hairline-light: #dad6cc;
-  --sl-color-hairline-shade: #cfccc3;
-}
+/* The panel: the site sits in a CrowPanel, a white bezel round a paper screen, drawn in the
+   panels' own seven greys and nothing else. One theme, whatever the reader's system prefers.
+   Overrides Starlight's properties (its style/props.css); these rules sit outside its cascade
+   layers, so they win. */
 
 :root {
-  --sl-color-white: #f2f0ea;
-  --sl-color-gray-1: #e2dfd7;
-  --sl-color-gray-2: #cfccc3;
-  --sl-color-gray-3: #a29f96;
-  --sl-color-gray-4: #6f6c65;
-  --sl-color-gray-5: #3a3833;
-  --sl-color-gray-6: #1d1d1b;
-  --sl-color-black: #000;
-  --sl-color-accent-low: #1d1d1b;
-  --sl-color-accent: #eeece6;
-  --sl-color-accent-high: #f2f0ea;
-  --sl-color-text-accent: #eeece6;
-  --sl-color-bg-nav: #000;
-  --sl-color-bg-sidebar: #000;
+  color-scheme: light;
+  --ink: #1d1d1b;
+  --grey-1: #3b3a38;
+  --grey-2: #5b5a57;
+  --grey-3: #7d7c78;
+  --grey-4: #a1a09b;
+  --grey-5: #c7c5c0;
+  --paper: #eeece6;
+  --bezel-white: #f8f8f6;
+  --bezel: 12px;
+  --bezel-bottom: 28px;
+  --ramp: 8px;
+
+  --sl-font: 'Inter Variable', system-ui, sans-serif;
+  --sl-color-white: var(--ink);
+  --sl-color-gray-1: var(--ink);
+  --sl-color-gray-2: var(--grey-1);
+  --sl-color-gray-3: var(--grey-2);
+  --sl-color-gray-4: var(--grey-3);
+  --sl-color-gray-5: var(--grey-5);
+  --sl-color-gray-6: #dad8d1;
+  --sl-color-gray-7: #e6e4dd;
+  --sl-color-black: var(--paper);
+  --sl-color-accent-low: var(--grey-5);
+  --sl-color-accent: var(--ink);
+  --sl-color-accent-high: var(--ink);
+  --sl-color-text-accent: var(--ink);
+  --sl-color-text-invert: var(--paper);
+  --sl-color-bg-nav: var(--paper);
+  --sl-color-bg-sidebar: var(--paper);
+  --sl-color-bg-inline-code: var(--grey-5);
+  --sl-color-hairline: var(--grey-5);
+  --sl-color-hairline-light: var(--grey-5);
+  --sl-color-hairline-shade: var(--ink);
+  --sl-color-backdrop-overlay: rgb(29 29 27 / 0.5);
+
+  /* Room for the bezel and the grey ramp at the top, and the bezel at the sides. */
+  --sl-nav-height: calc(3.5rem + var(--bezel) + var(--ramp));
+  --sl-nav-pad-x: calc(1.25rem + var(--bezel));
+  --sl-sidebar-pad-x: calc(0.75rem + var(--bezel));
 }
 
-/* The seven greys, ink to paper. */
-.header::before {
+@media (max-width: 50rem) {
+  :root {
+    --bezel: 6px;
+    --bezel-bottom: 22px;
+  }
+}
+
+/* The bezel: a frame over the whole window, the screen's edge an ink line inside it. Clicks pass
+   through it. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  border: var(--bezel) solid var(--bezel-white);
+  border-bottom-width: var(--bezel-bottom);
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+
+/* The status line along the bottom bezel. On the root, so no layer of Starlight's holds it under
+   the bezel; the empty alternative text keeps screen readers off it. */
+html::before,
+html::after {
+  position: fixed;
+  bottom: 0;
+  z-index: 1001;
+  height: var(--bezel-bottom);
+  display: flex;
+  align-items: center;
+  font: 600 0.6875rem var(--sl-font);
+  color: var(--grey-3);
+  pointer-events: none;
+}
+html::before {
+  content: 'CrowPanel 5.79" and 4.2" V1.2' / '';
+  left: calc(var(--bezel) + 0.25rem);
+}
+html::after {
+  content: 'Partial refresh 0.4 s' / '';
+  right: calc(var(--bezel) + 0.25rem);
+}
+
+/* The screen's chrome: the header under the grey ramp, ruled off in ink. */
+header.header {
+  padding-top: calc(var(--bezel) + var(--ramp));
+  border-bottom: 2px solid var(--ink);
+}
+header.header::before {
   content: '';
   position: absolute;
-  inset: 0 0 auto 0;
-  height: 5px;
-  background: linear-gradient(to right, #1d1d1b 0.00% 14.29%, #3b3a38 14.29% 28.57%, #5b5a57 28.57% 42.86%, #7d7c78 42.86% 57.14%, #a1a09b 57.14% 71.43%, #c7c5c0 71.43% 85.71%, #eeece6 85.71% 100.00%);
+  inset: var(--bezel) var(--bezel) auto;
+  height: var(--ramp);
+  background: linear-gradient(
+    to right,
+    var(--ink) 0 14.29%,
+    var(--grey-1) 14.29% 28.57%,
+    var(--grey-2) 28.57% 42.86%,
+    var(--grey-3) 42.86% 57.14%,
+    var(--grey-4) 57.14% 71.43%,
+    var(--grey-5) 71.43% 85.71%,
+    var(--paper) 85.71%
+  );
+}
+.site-title {
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+@media (min-width: 50rem) {
+  .sidebar-pane {
+    border-inline-end: 2px solid var(--ink);
+  }
+}
+
+/* Keep the last lines clear of the bottom bezel. */
+.main-frame,
+.right-sidebar {
+  padding-bottom: var(--bezel-bottom);
+}
+.sidebar-content {
+  padding-bottom: calc(var(--bezel-bottom) + 1rem);
+}
+
+/* The sidebar as the device's menu: heavy group labels, the current page in ink. */
+.sidebar-content .group-label .large {
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink);
+}
+.sidebar-content a {
+  border-radius: 0;
+}
+
+/* Hard edges, as on the glass. */
+site-search button,
+.pagination-links a,
+.sl-markdown-content code,
+.sl-markdown-content img {
+  border-radius: 0;
+}
+site-search button {
+  border: 2px solid var(--ink);
+  background: var(--paper);
+}
+.pagination-links a {
+  border: 2px solid var(--ink);
+  box-shadow: none;
+}
+
+/* Type: the device's heavy headings. */
+h1#_top,
+.sl-markdown-content :is(h1, h2, h3) {
+  font-weight: 800;
+  letter-spacing: -0.015em;
 }
 
 /* Links are ink, so they carry an underline. */
@@ -53,7 +170,10 @@
   text-underline-offset: 0.2em;
 }
 
-/* Tables ruled like the mock: a heavy rule under the head, hairlines between rows. */
+/* Tables ruled in ink under the head, hairlines between rows. */
 .sl-markdown-content th {
-  border-bottom: 2px solid var(--sl-color-white);
+  border-bottom: 2px solid var(--ink);
+}
+.sl-markdown-content td {
+  border-bottom: 1px solid var(--grey-5);
 }
