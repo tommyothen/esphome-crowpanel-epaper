@@ -1,9 +1,9 @@
-# A demo of the 4.2" driver, no network. Prev and next count. OK cycles how: glides, which take each
-# changed pixel straight to its new grey without flashing; fast black and white partials that
-# settle into greys 3 s after the last press (only around what changed); grey partials every time;
-# or fast partials alone. Home swaps four and seven greys with a full grey
-# refresh; Exit sleeps for 10 s. Fast greys throughout. Each refresh's time shows on the panel just
-# after it lands.
+# A demo of the 4.2" driver, no network. Prev and next count. OK cycles how: glides, which take
+# each changed pixel straight to its new grey without flashing; fast black and white partials
+# that settle into greys 3 s after the last press (only around what changed); grey partials every
+# time; or fast partials alone. Home swaps four and seven greys with a full grey refresh; Exit
+# sleeps for 10 s. Fast greys throughout. Each refresh's time shows on the panel just after it
+# lands.
 esphome:
   name: crowpanel-demo-42
   includes:

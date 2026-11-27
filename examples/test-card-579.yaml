@@ -1,7 +1,7 @@
 # Bring-up test card for the crowpanel_579 driver. Needs no network: flash over
 # USB and read the log there.
 #
-#   esphome run test-card.yaml
+#   esphome run test-card-579.yaml
 #
 # What it shows, and what to look for:
 # - A frame on the outermost pixels and the four corners named: a missing edge
@@ -31,7 +31,7 @@ logger:
 external_components:
   - source:
       type: local
-      path: components
+      path: ../components
 
 spi:
   clk_pin: GPIO12

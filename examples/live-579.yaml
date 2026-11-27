@@ -1,8 +1,8 @@
 # Live mode on the 5.79", no network: a clock counting the seconds since boot, a ball bouncing,
 # a ticker along the bottom that slides each item in and then holds it, and how many ticks a
-# second the panel is managing. In live
-# mode the driver draws the next frame while the panel shows the last, and goes on by itself while
-# the picture changes, so nothing here asks for updates after the first.
+# second the panel is managing. In live mode the driver draws the next frame while the panel shows
+# the last, and goes on by itself while the picture changes, so nothing here asks for updates
+# after the first.
 esphome:
   name: crowpanel-live-579
   on_boot:
@@ -80,7 +80,7 @@ display:
                        r, Color::BLACK);
       // A ticker along the bottom: one item at a time, sliding in from the right over half a
       // second and then holding still, so the ink settles crisp; the next every four seconds.
-      static const char *const ITEMS[] = {"Bins out tonight", "Rain from 15:00", "Dinner at 19:00", "Tommy is home"};
+      static const char *const ITEMS[] = {"Bins out tonight", "Rain from 15:00", "Dinner at 19:00", "Parcel due by 12:00"};
       const uint32_t item = now / 4000 % 4, into = now % 4000;
       const float slide = into < 500 ? 1 - into / 500.0f : 0;
       it.line(0, h - 52, w, h - 52, Color::BLACK);

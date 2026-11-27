@@ -1,7 +1,10 @@
 # crowpanel-epaper
 
-ESPHome external display components for ELECROW's CrowPanel ESP32-S3 e-paper
-HMI boards. Tested with ESPHome 2026.10.
+ESPHome display components for ELECROW's CrowPanel ESP32-S3 e-paper HMI boards,
+the 5.79" and the 4.2" V1.2. They drive the panels with their own
+charge-balanced waveforms: four or seven greys, partial refreshes that leave
+greys alone, glides that take pixels straight to a new grey without flashing,
+and a live mode for things that move. Tested with ESPHome 2026.10.
 
 ## Boards
 
@@ -19,6 +22,54 @@ its controllers and waveforms. List `crowpanel_epaper` alongside the board's
 component under `external_components`, or leave `components:` out to make every
 component available.
 
+## Getting started
+
+A 5.79" drawing in four greys once a minute; for the 4.2", use `crowpanel_42`
+for both the component and the platform. Pin `external_components` to a full
+commit SHA or a tag, since GitHub will not fetch a short SHA. The board's USB-C
+port is a CH340 on UART0 that resets the board into its bootloader, so flashing
+needs no BOOT button.
+
+```yaml
+external_components:
+  - source: github://tommyothen/crowpanel-epaper@0a17723f4748257bb40ea4a55352615feaf6924f  # a full commit SHA or a tag
+    components: [crowpanel_579, crowpanel_epaper]  # crowpanel_epaper is the core both boards share
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: UART0
+
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+
+font:
+  - file: "gfonts://Inter@600"
+    id: font
+    size: 28
+    bpp: 2
+
+display:
+  - platform: crowpanel_579
+    id: epd
+    grey: true
+    update_interval: 60s
+    lambda: |-
+      it.print(20, 20, id(font), Color::BLACK, "Hello");
+```
+
+`epaper_spi.full_update_next` and `epaper_spi.is_updating` work as they do for
+ESPHome's built-in `epaper_spi` displays.
+
 ## Choosing a driver
 
 Start with the balanced platform for your board (`crowpanel_579` or
@@ -30,8 +81,8 @@ whether it needs greys.
 | `crowpanel_579` / `crowpanel_42`, `grey: false` (default) | Plain black and white, or the quickest full refresh on the 4.2" | Full B&W: about 3.7 s (5.79" OTP) or 1.15 to 1.3 s (4.2"). Flashes. Fast partials 0.4 to 0.5 s | Standard pins; 54 KB / 30 KB RAM for fast partials | Black and white only; no anti-aliased text |
 | `grey: true` (4 greys) | Dashboards, anti-aliased text (`bpp: 2`), wake-draw-sleep displays | Full refresh: about 4.2 s (5.79") or 3.7 s (4.2"). Flashes | `grey: true` | On the 5.79" dark grey sits darker than an even third; on the 4.2" greys are near even thirds |
 | `grey_levels: 7` | Shading, pictures, `bpp: 4` text, or even grey steps on the 5.79" | Full refresh: 4.4 to 4.5 s (5.79") or 3.95 s (4.2"), three passes. Flashes | `grey: true` | Longer than four greys |
-| `fast_greys: true` (4.2" only) | 4.2" dashboards or pictures that run grey refreshes often | Full 4 or 7 greys in about 2.0 s; 7-grey partial in 2.3 s. Flashes | `crowpanel_42`, `grey: true` | History matches slow greys (within 0.09); less field time than slow greys |
-| Fast partials (`grey_partials: false`, default) | Clocks, counters, minute dashboards, button and dial input | 0.4 to 0.5 s (5.79") or 0.44 s (4.2"); cold partial after wake 1.3 s or 0.98 s. No flash | 54 KB / 30 KB RAM for balance tracking | Changed pixels show B&W until the next full refresh (or `request_grey_partial()` on 4.2"); full-refresh blacks clear only to grey; each push is out of balance until cancelled or settled |
+| `fast_greys: true` (4.2" only) | 4.2" dashboards or pictures that run grey refreshes often | Full 4 or 7 greys in about 2.0 s; 7-grey partial in 2.3 s. Flashes | `crowpanel_42`, `grey: true` | Erases the picture before as well as slow greys (each grey within 0.09) |
+| Fast partials (`grey_partials: false`, default) | Clocks, counters, minute dashboards, button and dial input | 0.4 to 0.5 s (5.79") or 0.44 s (4.2"); cold partial after wake 1.3 s or 0.98 s. No flash | 54 KB / 30 KB RAM for balance tracking | Changed pixels show B&W until the next full refresh (or `request_grey_partial()` on 4.2"); a large black area from a full refresh clears only to light grey; each push is out of balance until cancelled or settled |
 | `grey_partials: true` (4.2" only) | Menus or dashboards where changed regions must keep exact greys without flashing the rest | About 3.75 s slow, or 2.3 s with `fast_greys: true` (7 greys). Flashes only the changed window; rest holds within 0.01 | `crowpanel_42`, `grey: true`, PSRAM (60 KB) | As slow as a full grey refresh; changes far apart redraw everything between them in one rectangle |
 | Fast partials + `request_grey_partial()` (4.2" only) | Interactive screens that answer quickly on input, then clean up once still | 0.44 s per press, then one windowed grey refresh after a delay | `crowpanel_42`, `grey: true`, PSRAM | Single rectangle around everything changed; your YAML script triggers the settle |
 | `grey_partials: glide` | Dashboards or UI updates with greys where flashing is unwelcome | Box in 0.32 to 0.38 s (4.2") or 0.5 s (5.79"); whole panel 0.93 s or 1.3 s. No flash | `grey: true`, PSRAM (about 330 KB on 4.2", 610 KB on 5.79") | Greys land near, not exact (about 0.04 out on both, in perceptual lightness) until the next grey refresh; power loss or reflashing mid-flight loses the drive record |
@@ -82,6 +133,115 @@ A few practical rules follow from how the panels behave:
   colder. The 4.2" reads its own panel temperature whenever its supplies come
   on.
 
+## Options
+
+All pins default to the boards' fixed wiring, which the two share.
+
+| Option | Default | Notes |
+|---|---|---|
+| `grey` | `false` | Full refreshes in four greys (about 4.2 s on 5.79", 3.7 s on 4.2") instead of black and white |
+| `grey_levels` | `4` | `4` or `7`. `7` runs three passes with a half step between each of the four greys (4.4 to 4.5 s on 5.79", 3.95 s on 4.2"); needs `grey: true` |
+| `grey_partials` | `false` | `glide`: no-flash glides to the new grey. `live`: continuous ticks towards the latest frame, for things that move. On `crowpanel_42`, also `true` for windowed grey partials (`crowpanel_579` rejects `true`). Needs `grey: true` and PSRAM |
+| `temperature_sensor` | none | Sensor ID for panel temperature in °C. On 5.79", switches self-balanced waveforms across temperature bands (without one, 50 Hz, 13 to 20 °C). On 4.2", overrides the panel's own sensor |
+| `full_update_every` | `30` | Updates per full refresh (`1` to `255`); `1` makes every update full. Live ticks do not increment this count |
+| `update_interval` | `never` | Most devices decide for themselves when to draw |
+| `rotation` | `0` | Display rotation in degrees |
+| `cs_pin` | `GPIO45` | SPI chip select |
+| `dc_pin` | `GPIO46` | Data/command pin |
+| `reset_pin` | `GPIO47` | Panel reset pin |
+| `busy_pin` | `GPIO48` | Panel BUSY input (inverted by default on `crowpanel_42`, where the UC8276C holds BUSY low while working) |
+| `power_pin` | `GPIO7` | Switches the panel's supply/ground; must be high before anything answers |
+| `data_rate` | `20MHz` | SPI clock rate (`10MHz` by default on `crowpanel_42`, the UC8276C's spec limit) |
+| `lambda`, `pages` | none | Standard ESPHome drawing options; at most one may be set |
+
+`crowpanel_42` adds one option and two calls:
+
+| Option | Default | Notes |
+|---|---|---|
+| `fast_greys` | `false` | Grey refreshes in two shakes and a push at 100 Hz: about 2.0 s for four or seven greys, and grey partials likewise; needs `grey: true` |
+
+`id(epd).request_grey_partial()` and `id(epd).panel_temperature()` are the
+4.2"'s own calls.
+
+`crowpanel_579_turbo` and `crowpanel_42_turbo` take their board's options and
+require `grey: true`.
+
+## Drawing
+
+Draw with `Color::BLACK` on `Color::WHITE` paper.
+
+- With four greys, colours map by luma: below 64 is black, below 128 dark grey,
+  below 192 light grey, and the rest white. Fonts with `bpp: 2` give
+  anti-aliased text on a grey refresh. On the 5.79" the four greys keep
+  Waveshare's spacing, where dark grey sits darker than an even third and makes
+  anti-aliased text look bold; on the 4.2" they are near even thirds.
+- With `grey_levels: 7`, luma maps to seven even steps, and `bpp: 4` fonts use
+  them. Seven greys space the four base levels evenly first, so dark grey
+  stands clear of black, then add the half steps.
+- Black and white partial refreshes drive only pixels whose black or white
+  reading changes (white from level 4 up). Greys elsewhere stay as the last
+  grey refresh left them; a changed pixel shows as black or white until the
+  next full refresh, or on the 4.2" a grey partial.
+
+## Front controls
+
+The controls are plain GPIOs, active low with the board's own pull-ups, so they
+work with ESPHome's `gpio` binary sensor and can wake the board from deep sleep
+with `esp32_ext1_wakeup` in `ANY_LOW` mode. The two boards share them.
+
+| 5.79" | 4.2" | GPIO |
+|---|---|---|
+| Dial up | PRV | GPIO6 |
+| Dial down | NEXT | GPIO4 |
+| Dial press | OK | GPIO5 |
+| MENU | HOME | GPIO2 |
+| EXIT | EXIT | GPIO1 |
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    id: dial_press
+    pin: { number: GPIO5, inverted: true }
+    filters: [delayed_on: 20ms]
+    on_press:
+      - epaper_spi.full_update_next: epd
+      - component.update: epd
+```
+
+## Deep sleep
+
+Nothing extra needs configuring on the display. Before the ESP32 sleeps, the
+driver finishes any pending plane copy, settles any glides, live ticks or
+fast-partial pixels left out of balance (on balanced platforms), puts the
+5.79"'s controllers into deep sleep mode 1 (which retains RAM) or switches the
+4.2"'s supplies off and leaves its controller in standby (its own deep sleep
+loses the RAM within 30 minutes), and holds `power_pin` and `reset_pin` high
+through sleep. On wake, the first update can be partial with no flash, and
+`full_update_every`, the row hashes and (on the 4.2") the dirty window for
+`request_grey_partial()` carry on across wakes.
+
+```yaml
+deep_sleep:
+  id: sleeper
+  sleep_duration: 30min
+
+esphome:
+  on_boot:
+    priority: -100
+    then:
+      - component.update: epd
+      - wait_until:
+          condition:
+            not:
+              epaper_spi.is_updating: epd
+      - deep_sleep.enter: sleeper
+```
+
+Wait for `epaper_spi.is_updating` to clear before entering deep sleep. If the
+ESP32 sleeps part way through an update, panel RAM may no longer match the
+glass, unsettled pixels stay uncancelled, and the driver makes the next update
+a full one.
+
 ## CrowPanel 5.79"
 
 `crowpanel_579` drives the 5.79" panel, which uses two SSD1683 controllers in
@@ -93,8 +253,8 @@ PSRAM, while the panel's own RAM holds the previous frame.
 | Mode | Time (13 to 20 °C) | Behaviour |
 |---|---|---|
 | Full black and white (`grey: false`) | about 3.7 s | Panel OTP waveform, temperature compensated; resets registers first so it stays clean after loaded partials |
-| Full four greys (`grey: true`) | about 4.2 s | 4 greys, charge balanced; the panel OTP has no grey mode (deeper white matches the OTP refresh; still quicker than Waveshare's unmodified 4.2" V2 waveform) |
-| Full seven greys (`grey_levels: 7`) | 4.4 to 4.5 s | 7 greys in three passes (half steps at 125 Hz), charge balanced; see the notes for measured levels |
+| Full four greys (`grey: true`) | about 4.2 s | Charge balanced; the panel's OTP has no grey mode. Measured 0.02, 0.26, 0.62 and 1.00 in L* |
+| Full seven greys (`grey_levels: 7`) | 4.4 to 4.5 s | Three passes (half steps at 125 Hz), charge balanced. Measured 0.01, 0.18, 0.37, 0.54, 0.69, 0.83 and 1.00 in L* |
 | Partial, first after boot or wake | about 1.3 s | Black and white, 25 frames each way, charge balanced, changed rows only; greys elsewhere survive (the panel's OTP partial fades them) |
 | Partial, subsequent | 0.4 to 0.5 s | 15-frame one-way push with per-pixel balance tracking, changed rows only |
 | Partial, nothing changed | about 50 ms | Drawing only; the panel is not driven |
@@ -107,8 +267,8 @@ ticks are 8 frames rather than 4, and scans and ticks run VCOM at its measured
 null (`0x28`) so held whites do not darken. The SSD1683 has no partial window,
 so glides settle at the next full refresh rather than in a window.
 
-Panel wiring details, waveform notes and measurements (including the seven-grey
-readings) are in [docs/crowpanel-579.md](docs/crowpanel-579.md).
+Panel wiring details, waveform notes, measurements and how the greys were
+measured are in [docs/crowpanel-579.md](docs/crowpanel-579.md).
 
 ## CrowPanel 4.2"
 
@@ -207,162 +367,6 @@ display:
     grey_partials: glide  # no flash; greys settle exactly at the next grey refresh
 ```
 
-## Minimal configuration
-
-Pin `external_components` to a full commit SHA or a tag; GitHub will not fetch a
-short SHA. The board's USB-C port is a CH340 on UART0, which resets the board
-into the bootloader automatically, so flashing needs no BOOT button. For the
-4.2", use `crowpanel_42` for the component and the platform.
-
-```yaml
-external_components:
-  - source: github://tommyothen/crowpanel-epaper@0a17723f4748257bb40ea4a55352615feaf6924f  # a full commit SHA or a tag
-    components: [crowpanel_579, crowpanel_epaper]  # crowpanel_epaper is the core both boards share
-
-esp32:
-  variant: esp32s3
-  flash_size: 8MB
-  framework:
-    type: esp-idf
-
-psram:
-  mode: octal
-  speed: 80MHz
-
-logger:
-  hardware_uart: UART0
-
-spi:
-  clk_pin: GPIO12
-  mosi_pin: GPIO11
-
-font:
-  - file: "gfonts://Inter@600"
-    id: font
-    size: 28
-    bpp: 2
-
-display:
-  - platform: crowpanel_579
-    id: epd
-    grey: true
-    update_interval: 60s
-    lambda: |-
-      it.print(20, 20, id(font), Color::BLACK, "Hello");
-```
-
-`epaper_spi.full_update_next` and `epaper_spi.is_updating` work as they do for
-ESPHome's built-in `epaper_spi` displays.
-
-## Options
-
-All pins default to the boards' fixed wiring, which the two share.
-
-| Option | Default | Notes |
-|---|---|---|
-| `grey` | `false` | Full refreshes in four greys (about 4.2 s on 5.79", 3.7 s on 4.2") instead of black and white |
-| `grey_levels` | `4` | `4` or `7`. `7` runs three passes with a half step between each of the four greys (4.4 to 4.5 s on 5.79", 3.95 s on 4.2"); needs `grey: true` |
-| `grey_partials` | `false` | `glide`: no-flash glides to the new grey. `live`: continuous ticks towards the latest frame, for things that move. On `crowpanel_42`, also `true` for windowed grey partials (`crowpanel_579` rejects `true`). Needs `grey: true` and PSRAM |
-| `temperature_sensor` | none | Sensor ID for panel temperature in °C. On 5.79", switches self-balanced waveforms across temperature bands (without one, 50 Hz, 13 to 20 °C). On 4.2", overrides the panel's own sensor |
-| `full_update_every` | `30` | Updates per full refresh (`1` to `255`); `1` makes every update full. Live ticks do not increment this count |
-| `update_interval` | `never` | Most devices decide for themselves when to draw |
-| `rotation` | `0` | Display rotation in degrees |
-| `cs_pin` | `GPIO45` | SPI chip select |
-| `dc_pin` | `GPIO46` | Data/command pin |
-| `reset_pin` | `GPIO47` | Panel reset pin |
-| `busy_pin` | `GPIO48` | Panel BUSY input (inverted by default on `crowpanel_42`, where the UC8276C holds BUSY low while working) |
-| `power_pin` | `GPIO7` | Switches the panel's supply/ground; must be high before anything answers |
-| `data_rate` | `20MHz` | SPI clock rate (`10MHz` by default on `crowpanel_42`, the UC8276C's spec limit) |
-| `lambda`, `pages` | none | Standard ESPHome drawing options; at most one may be set |
-
-`crowpanel_42` adds one option and two calls:
-
-| Option | Default | Notes |
-|---|---|---|
-| `fast_greys` | `false` | Grey refreshes in two shakes and a push at 100 Hz: about 2.0 s for four or seven greys, and grey partials likewise; needs `grey: true` |
-
-`id(epd).request_grey_partial()` and `id(epd).panel_temperature()` are the
-4.2"'s own calls.
-
-`crowpanel_579_turbo` and `crowpanel_42_turbo` take their board's options and
-require `grey: true`.
-
-## Drawing
-
-Draw with `Color::BLACK` on `Color::WHITE` paper.
-
-- With four greys, colours map by luma: below 64 is black, below 128 dark grey,
-  below 192 light grey, and the rest white. Fonts with `bpp: 2` give
-  anti-aliased text on a grey refresh. On the 5.79" the four greys keep
-  Waveshare's spacing, where dark grey sits darker than an even third and makes
-  anti-aliased text look bold; on the 4.2" they are even thirds.
-- With `grey_levels: 7`, luma maps to seven even steps, and `bpp: 4` fonts use
-  them. Seven greys space the four base levels evenly first, so dark grey
-  stands clear of black, then add the half steps.
-- Black and white partial refreshes drive only pixels whose black or white
-  reading changes (white from level 4 up). Greys elsewhere stay as the last
-  grey refresh left them; a changed pixel shows as black or white until the
-  next full refresh, or on the 4.2" a grey partial.
-
-## Front controls
-
-The controls are plain GPIOs, active low with the board's own pull-ups, so they
-work with ESPHome's `gpio` binary sensor and can wake the board from deep sleep
-with `esp32_ext1_wakeup` in `ANY_LOW` mode. The two boards share them.
-
-| 5.79" | 4.2" | GPIO |
-|---|---|---|
-| Dial up | PRV | GPIO6 |
-| Dial down | NEXT | GPIO4 |
-| Dial press | OK | GPIO5 |
-| MENU | HOME | GPIO2 |
-| EXIT | EXIT | GPIO1 |
-
-```yaml
-binary_sensor:
-  - platform: gpio
-    id: dial_press
-    pin: { number: GPIO5, inverted: true }
-    filters: [delayed_on: 20ms]
-    on_press:
-      - epaper_spi.full_update_next: epd
-      - component.update: epd
-```
-
-## Deep sleep
-
-Nothing extra needs configuring on the display. Before the ESP32 sleeps, the
-driver finishes any pending plane copy, settles any glides, live ticks or
-fast-partial pixels left out of balance (on balanced platforms), puts the
-5.79"'s controllers into deep sleep mode 1 (which retains RAM) or switches the
-4.2"'s supplies off and leaves its controller in standby (its own deep sleep
-loses the RAM within 30 minutes), and holds `power_pin` and `reset_pin` high
-through sleep. On wake, the first update can be partial with no flash, and
-`full_update_every`, the row hashes and (on the 4.2") the dirty window for
-`request_grey_partial()` carry on across wakes.
-
-```yaml
-deep_sleep:
-  id: sleeper
-  sleep_duration: 30min
-
-esphome:
-  on_boot:
-    priority: -100
-    then:
-      - component.update: epd
-      - wait_until:
-          condition:
-            not:
-              epaper_spi.is_updating: epd
-      - deep_sleep.enter: sleeper
-```
-
-Wait for `epaper_spi.is_updating` to clear before entering deep sleep. If the
-ESP32 sleeps part way through an update, panel RAM may no longer match the
-glass, unsettled pixels stay uncancelled, and the driver makes the next update
-a full one.
-
 ## Turbo
 
 `crowpanel_579_turbo` and `crowpanel_42_turbo` are the same drivers with charge
@@ -400,7 +404,7 @@ checkerboard):
 | | 4.2" balanced | 4.2" turbo | 5.79" balanced | 5.79" turbo |
 |---|---|---|---|---|
 | Full refresh, seven greys | 3.9 s | 0.9 s | 4.5 s | 1.4 s |
-| Full refresh, black and white frame | 3.9 s | 0.46 s | 4.4 to 4.6 s | 0.67 to 0.87 s |
+| Full refresh of a black and white picture | 3.9 s | 0.46 s | 4.4 to 4.6 s | 0.67 to 0.87 s |
 | White | 1.00 | 1.02 to 1.07 | 1.00 | 0.99 to 1.01 |
 | Ghost of the checkerboard on white | 0.00 | 0.05, 0.03 after 12 s | 0.00 | 0.01 |
 | Ghost on black | 0.00 | 0.00 | 0.015 | 0.01 |
@@ -493,9 +497,9 @@ apply. Nothing is balanced, cancelled or settled.
   animation until you request a refresh.
 
 ## Examples
-
-Four demos need no network: flash one over USB and drive it from the board's own
-buttons (or let live mode animate on its own).
+Every example needs no network: flash it over USB with
+`esphome run examples/<name>.yaml`, then use the board's own buttons, or let
+live mode animate on its own.
 
 - [examples/demo-579.yaml](examples/demo-579.yaml): the dial counts with fast
   partials, the press swaps four and seven greys, MENU runs a grey refresh, EXIT
@@ -510,20 +514,14 @@ buttons (or let live mode animate on its own).
   for updates after the first: a clock, a bouncing ball and, on the 5.79", a
   ticker that slides each item in and holds it, with the live tick rate shown
   once a second.
-
-## Test card
-
-Both test cards need no network: flash and read logs over USB with
-`esphome run test-card.yaml` (5.79") or `esphome run test-card-42.yaml` (4.2").
-
-- [test-card.yaml](test-card.yaml) draws a border on the outermost pixels with
-  the four corners named, four greys on each half, anti-aliased text in black
-  and dark grey, a counter across the seam and a moving box, with a grey refresh
-  every sixth update and partials between. A missing edge or mirrored text means
-  the halves or rotation are wrong; the greys should match on both sides of the
-  seam.
-- [test-card-42.yaml](test-card-42.yaml) does the same for the 4.2" with seven
-  greys, the panel's own temperature and grey partials.
+- [examples/test-card-579.yaml](examples/test-card-579.yaml) and
+  [examples/test-card-42.yaml](examples/test-card-42.yaml): bring-up test cards,
+  with logs over USB. A border on the outermost pixels with the corners named,
+  greys, anti-aliased text in black and dark grey, a counter and a moving box,
+  with a grey refresh every sixth update and partials between. A missing edge
+  or mirrored text means the rotation (or on the 5.79", the halves) is wrong;
+  the 5.79"'s greys should match on both sides of the seam. The 4.2"'s shows
+  seven greys, its own temperature and grey partials.
 
 ## Limitations
 
