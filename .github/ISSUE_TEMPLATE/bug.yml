@@ -13,8 +13,6 @@ body:
       options:
         - CrowPanel 5.79"
         - CrowPanel 4.2" V1.2
-    validations:
-      required: true
   - type: input
     id: driver
     attributes:
