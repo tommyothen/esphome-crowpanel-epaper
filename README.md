@@ -94,3 +94,6 @@ The same pages, searchable, at
 Built on what [other projects](docs/other-drivers.md) worked out first. MIT
 licence; the four-grey waveform is adapted from Waveshare's, under the notice in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+If you use these drivers, a [star on GitHub](https://github.com/tommyothen/crowpanel-epaper)
+would be much appreciated: it helps other CrowPanel owners find them.
