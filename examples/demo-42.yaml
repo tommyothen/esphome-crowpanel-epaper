@@ -37,7 +37,7 @@ external_components:
   - source:
       type: local
       path: ../components
-    components: [crowpanel_42, crowpanel_epaper]
+    components: [crowpanel_42_v1_2, crowpanel_epaper]
 
 spi:
   clk_pin: GPIO12
@@ -198,7 +198,7 @@ font:
   - { file: "gfonts://Inter@500", id: f_small, size: 14, bpp: 2, glyphsets: [GF_Latin_Core] }
 
 display:
-  - platform: crowpanel_42
+  - platform: crowpanel_42_v1_2
     id: epd
     grey: true
     grey_levels: 7

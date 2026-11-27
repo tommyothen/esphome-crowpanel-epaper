@@ -1,6 +1,6 @@
 # Turbo
 
-`crowpanel_579_turbo` and `crowpanel_42_turbo` are the same drivers with charge
+`crowpanel_579_turbo` and `crowpanel_42_v1_2_turbo` are the same drivers with charge
 balance switched off, at the same ±15 V voltages. They are for experiments:
 every refresh leaves its drive on the panel, which builds image retention on a
 still picture and may shorten the panel's life. Keep a display you rely on on
@@ -10,10 +10,10 @@ PSRAM, and needs its board's component listed too:
 ```yaml
 external_components:
   - source: github://tommyothen/esphome-crowpanel-epaper@v1.0.0
-    components: [crowpanel_42_turbo, crowpanel_42, crowpanel_epaper]
+    components: [crowpanel_42_v1_2_turbo, crowpanel_42_v1_2, crowpanel_epaper]
 
 display:
-  - platform: crowpanel_42_turbo
+  - platform: crowpanel_42_v1_2_turbo
     grey: true
 ```
 

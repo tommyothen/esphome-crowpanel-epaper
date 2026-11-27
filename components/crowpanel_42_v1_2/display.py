@@ -7,7 +7,7 @@ board's wiring is fixed, so every pin defaults to it and the YAML only says how 
       clk_pin: GPIO12
       mosi_pin: GPIO11
     display:
-      - platform: crowpanel_42
+      - platform: crowpanel_42_v1_2
         lambda: ...
 """
 
@@ -39,8 +39,8 @@ CONF_FAST_GREYS = "fast_greys"
 CONF_POWER_PIN = "power_pin"
 CONF_TEMPERATURE_SENSOR = "temperature_sensor"
 
-crowpanel_42_ns = cg.esphome_ns.namespace("crowpanel_42")
-CrowPanel42 = crowpanel_42_ns.class_("CrowPanel42", CrowPanelBase)
+crowpanel_42_ns = cg.esphome_ns.namespace("crowpanel_42_v1_2")
+CrowPanel42V1_2 = crowpanel_42_ns.class_("CrowPanel42V1_2", CrowPanelBase)
 
 
 def _needs_grey(config):
@@ -61,7 +61,7 @@ CONFIG_SCHEMA = cv.All(
         )
     ).extend(
         {
-            cv.GenerateID(): cv.declare_id(CrowPanel42),
+            cv.GenerateID(): cv.declare_id(CrowPanel42V1_2),
             cv.Optional(CONF_CS_PIN, default="GPIO45"): pins.gpio_output_pin_schema,
             cv.Optional(CONF_DC_PIN, default="GPIO46"): pins.gpio_output_pin_schema,
             cv.Optional(CONF_RESET_PIN, default="GPIO47"): pins.internal_gpio_output_pin_schema,
@@ -102,7 +102,7 @@ CONFIG_SCHEMA = cv.All(
 )
 
 FINAL_VALIDATE_SCHEMA = spi.final_validate_device_schema(
-    "crowpanel_42", require_miso=False, require_mosi=True
+    "crowpanel_42_v1_2", require_miso=False, require_mosi=True
 )
 
 

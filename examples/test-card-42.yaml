@@ -1,4 +1,4 @@
-# Bring-up test card for the crowpanel_42 driver (CrowPanel 4.2", V1.2). Needs no
+# Bring-up test card for the crowpanel_42_v1_2 driver (CrowPanel 4.2", V1.2). Needs no
 # network: flash over USB and read the log there.
 #
 #   esphome run test-card-42.yaml
@@ -67,7 +67,7 @@ interval:
       - component.update: epd
 
 display:
-  - platform: crowpanel_42
+  - platform: crowpanel_42_v1_2
     id: epd
     grey: true
     grey_levels: 7

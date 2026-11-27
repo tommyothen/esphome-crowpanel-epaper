@@ -1,4 +1,4 @@
-#include "crowpanel_42.h"
+#include "crowpanel_42_v1_2.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,9 +14,9 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
-namespace esphome::crowpanel_42 {
+namespace esphome::crowpanel_42_v1_2 {
 
-static const char *const TAG = "crowpanel_42";
+static const char *const TAG = "crowpanel_42_v1_2";
 
 // The supplies stay on until ACTIVE_MS passes without an update, or for at most MAX_ACTIVE_MS at a
 // stretch however often updates come. Switching them on takes about 80 ms and off about 40 ms.
@@ -38,7 +38,7 @@ static constexpr float TUNED_FAST_HZ = 100;
 // bits, frames in the rest: 0 V, VSH 0x40, VSL 0x80) and two state repeats. VSH (+15 V) drives a
 // pixel black and VSL (-15 V) white. Every waveform below spends as long at one as at the other,
 // so no refresh leaves a net drive on any pixel.
-static constexpr size_t TABLE = 42, WAVEFORM = CrowPanel42::WAVEFORM;
+static constexpr size_t TABLE = 42, WAVEFORM = CrowPanel42V1_2::WAVEFORM;
 static_assert(WAVEFORM == 5 * TABLE);
 static constexpr uint8_t TABLE_WW = 1, TABLE_BW = 2, TABLE_WB = 3, TABLE_BB = 4;
 
@@ -294,7 +294,7 @@ static constexpr SimpleWaveform SETTLE{
 // a kick of black, evened the white but split the greys, which share its waveform. A hundred
 // turbo refreshes of a checkerboard in a row left a ghost of 0.12, and 0.02 under the balanced
 // refresh after, which faded to 0.004 within 13 minutes.
-static constexpr CrowPanel42::GlideTuning GLIDES{
+static constexpr CrowPanel42V1_2::GlideTuning GLIDES{
     {
         {0, -4, -10, -15, -20, -27, -48},
         {23, 0, -4, -7, -13, -22, -40},
@@ -417,14 +417,14 @@ static_assert(vcom_lasts(ONE_WAY.bytes) && vcom_lasts(CORRECTION.bytes) && vcom_
 // With grey partials, a hash of each row's levels as last drawn, so that after a wake, when the
 // copy of the last frame has gone with the PSRAM, a grey partial still knows which rows changed.
 // Trusted when shown_rows_valid says the last update finished.
-static RTC_DATA_ATTR uint32_t shown_rows[CrowPanel42::HEIGHT];
+static RTC_DATA_ATTR uint32_t shown_rows[CrowPanel42V1_2::HEIGHT];
 static RTC_DATA_ATTR bool shown_rows_valid;
 // What black and white partials had changed since the last frame drawn in greys, kept through
 // deep sleep for the next grey partial.
-static RTC_DATA_ATTR CrowPanel42::Window slept_dirty;
+static RTC_DATA_ATTR CrowPanel42V1_2::Window slept_dirty;
 
 // The reader for the panel's temperature.
-void CrowPanel42::setup_controllers_() {
+void CrowPanel42V1_2::setup_controllers_() {
   this->add_reader_();
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) {
     shown_rows_valid = false;
@@ -435,7 +435,7 @@ void CrowPanel42::setup_controllers_() {
 
 // Before a deep sleep the supplies go off, after any refresh still running; the controller stays
 // in standby, keeping its RAM. An update cut short leaves the row record untrusted.
-void CrowPanel42::prepare_for_sleep_(bool settled) {
+void CrowPanel42V1_2::prepare_for_sleep_(bool settled) {
   shown_rows_valid = shown_rows_valid && settled;
   slept_dirty = this->dirty_;
   if (this->supplies_on_) {
@@ -449,7 +449,7 @@ void CrowPanel42::prepare_for_sleep_(bool settled) {
 // since the last frame drawn in greys: exactly, with that frame, or after a wake, the band of rows
 // whose levels changed; and around whatever black and white refreshes have touched since, which is
 // all of it when the last full refresh was one.
-bool CrowPanel42::plan_own_update_() {
+bool CrowPanel42V1_2::plan_own_update_() {
   const bool grey_partial = this->grey_ && this->pixels_ != nullptr &&
                             (this->grey_partials_ || this->glide_ || this->live_ || this->settle_requested_) &&
                             (this->shown_valid_ || shown_rows_valid || !is_empty(this->dirty_));
@@ -482,7 +482,7 @@ bool CrowPanel42::plan_own_update_() {
 // A partial sends only NEW: OLD already holds what is on the glass. Every other pass sends both,
 // and leaves the row record untrusted until the update has finished; a black and white partial
 // leaves the last frame drawn in greys as it was, and so the record.
-void CrowPanel42::start_pass_(Pass pass) {
+void CrowPanel42V1_2::start_pass_(Pass pass) {
   const bool partial = pass == Pass::FAST || pass == Pass::PARTIAL;
   this->plane_ = partial ? 1 : 0;
   if (!partial)
@@ -496,7 +496,7 @@ void CrowPanel42::start_pass_(Pass pass) {
 }
 
 // Out of partial mode before any plane is written: in it, writes wrap within the window.
-void CrowPanel42::pass_finished_() {
+void CrowPanel42V1_2::pass_finished_() {
   const Pass pass = this->passes_[this->pass_index_];
   if (this->windowed_ || is_scan(pass))
     this->command(0x92);
@@ -506,7 +506,7 @@ void CrowPanel42::pass_finished_() {
 // were through black and white refreshes, which instead grow the window the next grey partial
 // covers: a fast partial by the bytes whose reading changed, a balanced one, from cold or after a
 // wake without the glass's reading, by the rows it sent, and a full refresh by the whole panel.
-void CrowPanel42::update_finished_(Pass last) {
+void CrowPanel42V1_2::update_finished_(Pass last) {
   if (last == Pass::BLACK_WHITE) {
     this->dirty_ = this->whole_window_();
   } else if (last == Pass::PARTIAL) {
@@ -516,17 +516,17 @@ void CrowPanel42::update_finished_(Pass last) {
 }
 
 // After a wake, a grey partial finds the rows that changed from these hashes.
-void CrowPanel42::rows_drawn_(uint16_t first, uint16_t last) {
+void CrowPanel42V1_2::rows_drawn_(uint16_t first, uint16_t last) {
   for (size_t y = first; y <= last; y++)
     shown_rows[y] = this->level_row_hash_(y);
   shown_rows_valid = true;
 }
 
-void CrowPanel42::reading_changed_(size_t y, size_t i) {
+void CrowPanel42V1_2::reading_changed_(size_t y, size_t i) {
   merge(this->dirty_, {static_cast<uint8_t>(i), static_cast<uint8_t>(i), static_cast<uint16_t>(y), static_cast<uint16_t>(y)});
 }
 
-void CrowPanel42::forget_() {
+void CrowPanel42V1_2::forget_() {
   this->shown_valid_ = false;
   this->windowed_ = false;
   this->dirty_ = EMPTY_WINDOW;
@@ -535,7 +535,7 @@ void CrowPanel42::forget_() {
 
 // A controller already set up needs no reset or initialisation: every refresh loads its own
 // waveform and frame rate, and every plane it reads is written for it.
-bool CrowPanel42::reset() {
+bool CrowPanel42V1_2::reset() {
   if (this->ready_)
     return true;
   if (!EPaperBase::reset())
@@ -544,7 +544,7 @@ bool CrowPanel42::reset() {
   return true;
 }
 
-bool CrowPanel42::initialise(bool partial) {
+bool CrowPanel42V1_2::initialise(bool partial) {
   if (!this->is_idle_())
     return false;
   if (!this->ready_) {
@@ -565,7 +565,7 @@ bool CrowPanel42::initialise(bool partial) {
 // -0.01 at -1.5 V; Elecrow's -0.6 V lightened them by 0.03 and 0.05 in only 173. Every waveform rests
 // at 0 V for some frames, and every pixel outside a partial window does for the whole refresh, so a
 // VCOM off its null both drifts the greys and leaves a DC bias on balanced waveforms.
-void CrowPanel42::send_init_() {
+void CrowPanel42V1_2::send_init_() {
   this->cmd_data(0x00, {0x3F, 0x0D});
   this->cmd_data(0x01, {0x03, 0x10, 0x3F, 0x3F, 0x03});
   this->cmd_data(0x06, {0x96, 0x96, 0x29});
@@ -578,7 +578,7 @@ void CrowPanel42::send_init_() {
 
 // Sends planes plane_ to 1, OLD then NEW, a 10 ms slice at a time, ROWS_A_WRITE rows to a write.
 // Returns true once the last is out.
-bool HOT CrowPanel42::send_planes_(const Source &old_source, const Source &new_source) {
+bool HOT CrowPanel42V1_2::send_planes_(const Source &old_source, const Source &new_source) {
   const uint32_t start = millis();
   uint8_t data[ROWS_A_WRITE * PLANE_ROW];
   while (this->plane_ != 2) {
@@ -640,7 +640,7 @@ static float frame_rate_hz(uint8_t code) { return code <= 0x17 ? 5.0f * (code + 
 // follows the 5.79" panel's maker's, scaled to 50 Hz at 11 °C where these were tuned: about 65 Hz at
 // 16 °C, 75 at 20, 95 at 26 and 130 from 35. The controller's 5 Hz steps keep it smooth rather than
 // banded. The temperature is the one given, or else the panel's own; without either, 50 Hz.
-void CrowPanel42::set_frame_rates_() {
+void CrowPanel42V1_2::set_frame_rates_() {
   float celsius = this->panel_celsius_;
 #ifdef USE_SENSOR
   if (this->temperature_ != nullptr && !std::isnan(this->temperature_->state))
@@ -686,7 +686,7 @@ void CrowPanel42::set_frame_rates_() {
 
 // A second device on the bus for reading: the board wires the panel's data line to the bus's MOSI
 // pin alone, so reads turn that pin around (3-wire, half duplex). Only on a hardware bus.
-void CrowPanel42::add_reader_() {
+void CrowPanel42V1_2::add_reader_() {
   const auto host = this->parent_->get_interface();
   if (host != SPI2_HOST && host != SPI3_HOST)
     return;
@@ -701,7 +701,7 @@ void CrowPanel42::add_reader_() {
 }
 
 // The temperature the controller sensed at its last power on (0x40), in whole degrees.
-void CrowPanel42::read_panel_temperature_() {
+void CrowPanel42V1_2::read_panel_temperature_() {
   if (this->reader_ == nullptr || this->cs_ == nullptr)
     return;
   spi_transaction_t command = {};
@@ -734,7 +734,7 @@ void CrowPanel42::read_panel_temperature_() {
 
 
 // FNV-1a over row y's levels.
-uint32_t CROWPANEL_FAST CrowPanel42::level_row_hash_(size_t y) const {
+uint32_t CROWPANEL_FAST CrowPanel42V1_2::level_row_hash_(size_t y) const {
   const uint8_t *row = this->pixels_ + y * this->row_width_;
   uint32_t hash = 2166136261u;
   for (size_t i = 0; i != this->row_width_; i++)
@@ -744,7 +744,7 @@ uint32_t CROWPANEL_FAST CrowPanel42::level_row_hash_(size_t y) const {
 
 // After a wake, without the last frame drawn: the band of rows whose levels differ from those last
 // drawn, across the whole width. False when no row differs.
-bool CrowPanel42::find_changed_band_() {
+bool CrowPanel42V1_2::find_changed_band_() {
   int first_row = -1, last_row = -1;
   for (size_t y = 0; y != HEIGHT; y++) {
     if (this->level_row_hash_(y) != shown_rows[y]) {
@@ -760,13 +760,13 @@ bool CrowPanel42::find_changed_band_() {
   return true;
 }
 
-bool CrowPanel42::in_window_(size_t y, size_t bank) const {
+bool CrowPanel42V1_2::in_window_(size_t y, size_t bank) const {
   return y >= this->window_.first_row && y <= this->window_.last_row && bank >= this->window_.first_bank &&
          bank <= this->window_.last_bank;
 }
 
 // Whether any pixel a fast partial left out of balance is in the window.
-bool CrowPanel42::unsettled_in_window_() const {
+bool CrowPanel42V1_2::unsettled_in_window_() const {
   if (this->unsettled_count_ == 0)
     return false;
   for (size_t y = this->window_.first_row; y <= this->window_.last_row; y++) {
@@ -780,14 +780,14 @@ bool CrowPanel42::unsettled_in_window_() const {
 
 // The supplies come on before the first refresh of a spell; the state machine waits on BUSY, which
 // the controller holds low until they are up.
-void CrowPanel42::power_on() {
+void CrowPanel42V1_2::power_on() {
   if (this->unchanged_ || this->supplies_on_)
     return;
   this->switch_supplies_on_();
   this->read_temperature_ = true;
 }
 
-void CrowPanel42::refresh_screen(bool partial) {
+void CrowPanel42V1_2::refresh_screen(bool partial) {
   if (this->unchanged_) {
     ESP_LOGV(TAG, "Nothing changed; no refresh");
     return;
@@ -874,7 +874,7 @@ void CrowPanel42::refresh_screen(bool partial) {
 // Loads a waveform's tables and its frame rate. The controller's VCOM and white to black tables
 // take eight groups and the others six; in black and white mode it runs six, so the last two are
 // sent empty.
-void CrowPanel42::load_waveform_(const uint8_t *waveform, uint8_t frame_rate) {
+void CrowPanel42V1_2::load_waveform_(const uint8_t *waveform, uint8_t frame_rate) {
   // The registers in the controller's order: VCOM, WW, black to white (WB here), white to black
   // (BW here), BB.
   static constexpr uint8_t ORDER[5] = {0, TABLE_WW, TABLE_WB, TABLE_BW, TABLE_BB};
@@ -891,7 +891,7 @@ void CrowPanel42::load_waveform_(const uint8_t *waveform, uint8_t frame_rate) {
 // The base would sleep the controller after every update. Here the supplies stay on until
 // ACTIVE_MS passes without another update, so the next one skips switching them on, but no longer
 // than MAX_ACTIVE_MS at a stretch. The controller itself stays in standby, keeping its RAM.
-void CrowPanel42::deep_sleep() {
+void CrowPanel42V1_2::deep_sleep() {
   if (this->continue_live_())
     return;  // ticking on, the supplies with it
   if (this->supplies_on_ && millis() - this->supplies_since_ >= MAX_ACTIVE_MS) {
@@ -907,7 +907,7 @@ void CrowPanel42::deep_sleep() {
   }
 }
 
-void CrowPanel42::wind_down_() {
+void CrowPanel42V1_2::wind_down_() {
   if (this->state_ != epaper_spi::EPaperState::IDLE || this->copying_)
     return;
   this->switch_supplies_off_();
@@ -915,7 +915,7 @@ void CrowPanel42::wind_down_() {
 
 // A hardware reset, which switches the supplies off and the registers back to their defaults but
 // keeps the RAM.
-void CrowPanel42::reset_controllers_() {
+void CrowPanel42V1_2::reset_controllers_() {
   this->cancel_timeout("idle");
   if (this->reset_pin_ != nullptr) {
     this->reset_pin_->digital_write(false);
@@ -930,7 +930,7 @@ void CrowPanel42::reset_controllers_() {
 
 // Settling, waiting on BUSY, for a deep sleep that cannot wait for an update: only the pixels a
 // fast partial left a push out blink, and land where they were.
-void CrowPanel42::settle_now_() {
+void CrowPanel42V1_2::settle_now_() {
   if (!this->ready_) {
     this->reset_controllers_();
     this->send_init_();
@@ -953,7 +953,7 @@ void CrowPanel42::settle_now_() {
   this->unsettled_count_ = 0;
 }
 
-void CrowPanel42::switch_supplies_on_() {
+void CrowPanel42V1_2::switch_supplies_on_() {
   ESP_LOGV(TAG, "Supplies on");
   this->command(0x04);
   this->next_delay_ = 2;
@@ -962,7 +962,7 @@ void CrowPanel42::switch_supplies_on_() {
 }
 
 // Switches the ±15 V supplies off, without waiting: the next command waits for BUSY anyway.
-void CrowPanel42::switch_supplies_off_() {
+void CrowPanel42V1_2::switch_supplies_off_() {
   if (!this->supplies_on_)
     return;
   ESP_LOGV(TAG, "Supplies off after %u s", (unsigned) ((millis() - this->supplies_since_) / 1000));
@@ -977,8 +977,8 @@ void CrowPanel42::switch_supplies_off_() {
 
 
 // Into partial mode on the window, gates scanning the whole panel as for grey partials.
-void CrowPanel42::send_window_() { this->enter_window_(this->window_); }
-void CrowPanel42::enter_window_(const Window &window) {
+void CrowPanel42V1_2::send_window_() { this->enter_window_(this->window_); }
+void CrowPanel42V1_2::enter_window_(const Window &window) {
   const uint16_t x0 = window.first_bank * 8, x1 = window.last_bank * 8 + 7;
   const uint16_t y0 = window.first_row, y1 = window.last_row;
   this->command(0x91);
@@ -989,7 +989,7 @@ void CrowPanel42::enter_window_(const Window &window) {
 
 // A scan's masks, the window's bytes of each, OLD then NEW, a 10 ms slice at a time, gathered
 // ROWS_A_WRITE rows to a write.
-bool HOT CROWPANEL_FAST CrowPanel42::send_own_planes_(Pass pass) {
+bool HOT CROWPANEL_FAST CrowPanel42V1_2::send_own_planes_(Pass pass) {
   const uint32_t start = millis();
   const size_t first = this->window_.first_bank, count = this->window_.last_bank - first + 1;
   uint8_t data[ROWS_A_WRITE * PLANE_ROW];
@@ -1025,7 +1025,7 @@ bool HOT CROWPANEL_FAST CrowPanel42::send_own_planes_(Pass pass) {
 // Glides and ticks leave their masks in the planes. Before anything else runs, or a deep sleep,
 // the glass's reading goes back into both planes there, in partial mode: everywhere else they
 // already hold it, and a black and white partial compares against them.
-void CrowPanel42::restore_reading_() {
+void CrowPanel42V1_2::restore_reading_() {
   if (is_empty(this->stale_) || this->glass_ == nullptr)
     return;
   this->wait_idle_(500);
@@ -1042,11 +1042,11 @@ void CrowPanel42::restore_reading_() {
   this->stale_ = EMPTY_WINDOW;
 }
 
-const CrowPanel42::GlideTuning *CrowPanel42::glide_tuning_() const { return &GLIDES; }
+const CrowPanel42V1_2::GlideTuning *CrowPanel42V1_2::glide_tuning_() const { return &GLIDES; }
 
 // The ink's speed against 11 °C, where the glides were tuned, along the same curve as the frame
 // rates.
-float CrowPanel42::speed_() const {
+float CrowPanel42V1_2::speed_() const {
   float celsius = this->panel_celsius_;
 #ifdef USE_SENSOR
   if (this->temperature_ != nullptr && !std::isnan(this->temperature_->state))
@@ -1055,4 +1055,4 @@ float CrowPanel42::speed_() const {
   return std::isnan(celsius) ? 1 : refresh_seconds(TUNED_CELSIUS) / refresh_seconds(celsius);
 }
 
-}  // namespace esphome::crowpanel_42
+}  // namespace esphome::crowpanel_42_v1_2

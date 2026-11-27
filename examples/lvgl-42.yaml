@@ -21,14 +21,14 @@ external_components:
   - source:
       type: local
       path: ../components
-    components: [crowpanel_42, crowpanel_epaper]
+    components: [crowpanel_42_v1_2, crowpanel_epaper]
 
 spi:
   clk_pin: GPIO12
   mosi_pin: GPIO11
 
 display:
-  - platform: crowpanel_42
+  - platform: crowpanel_42_v1_2
     id: epd
     grey: true
     fast_greys: true

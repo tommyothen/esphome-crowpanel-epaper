@@ -4,7 +4,7 @@
 
 #include "esphome/components/crowpanel_epaper/crowpanel_epaper.h"
 
-namespace esphome::crowpanel_42 {
+namespace esphome::crowpanel_42_v1_2 {
 
 /**
  * ELECROW CrowPanel ESP32-S3 4.2" e-paper, hardware V1.2: 400x300, four or seven greys.
@@ -26,14 +26,14 @@ namespace esphome::crowpanel_42 {
  * With grey partials, a partial update is a grey refresh of a partial window around what changed,
  * which no other pixel feels; after a wake, of the band of rows whose levels changed.
  */
-class CrowPanel42 : public crowpanel_epaper::CrowPanelBase {
+class CrowPanel42V1_2 : public crowpanel_epaper::CrowPanelBase {
  public:
   static constexpr uint16_t WIDTH = 400;
   static constexpr uint16_t HEIGHT = 300;
   static constexpr size_t PLANE_ROW = WIDTH / 8;  // a RAM plane's row: 8 pixels a byte
   static constexpr size_t WAVEFORM = 5 * 42;      // a waveform: five tables of six seven-byte groups
 
-  CrowPanel42() : CrowPanelBase("CrowPanel 4.2", WIDTH, HEIGHT) { this->frame_rate_ = 0x09; }
+  CrowPanel42V1_2() : CrowPanelBase("CrowPanel 4.2", WIDTH, HEIGHT) { this->frame_rate_ = 0x09; }
 
   // Partial updates redraw the window around what changed in greys, flashing only it, instead of
   // pushing the changed pixels to black or white. Needs grey.
@@ -113,4 +113,4 @@ class CrowPanel42 : public crowpanel_epaper::CrowPanelBase {
   bool windowed_{false};              // this update refreshes only window_
 };
 
-}  // namespace esphome::crowpanel_42
+}  // namespace esphome::crowpanel_42_v1_2

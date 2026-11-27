@@ -5,7 +5,7 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
 
 - **Which board.** V1.0 boards drive the panel with an SSD1683; V1.2 boards
   (the version is printed on the back, under the SKU) with a UC8276C.
-  `crowpanel_42` is for V1.2.
+  `crowpanel_42_v1_2` is for V1.2.
   BUSY tells them apart: the UC8276C holds it low while it works and high when
   idle, the opposite of the SSD1683.
 - **Pins** are the 5.79" board's: SPI clock GPIO12, data GPIO11, CS 45, DC 46,

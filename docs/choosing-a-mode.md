@@ -1,7 +1,7 @@
 # Choosing a mode
 
 Start with the balanced platform for your board, `crowpanel_579` or
-`crowpanel_42`, and pick a mode by how often the picture changes and whether it
+`crowpanel_42_v1_2`, and pick a mode by how often the picture changes and whether it
 needs greys. Each mode below says what it is for, what it costs and what to
 watch.
 
@@ -127,7 +127,7 @@ Fast partials, with `request_grey_partial()` once input stops.
 
 ## Turbo (experimental)
 
-`crowpanel_579_turbo` or `crowpanel_42_turbo`.
+`crowpanel_579_turbo` or `crowpanel_42_v1_2_turbo`.
 
 - **For:** bench experiments only.
 - **Full refresh:** seven greys in 0.9 s (4.2") or 1.4 s (5.79"); black and
@@ -140,7 +140,7 @@ Fast partials, with `request_grey_partial()` once input stops.
 ## Rules of thumb
 
 - **A device that wakes, draws once and sleeps.** Use `crowpanel_579` or
-  `crowpanel_42` with `grey: true`. The one update after a wake is the balanced
+  `crowpanel_42_v1_2` with `grey: true`. The one update after a wake is the balanced
   cold partial (on the 4.2" with `grey_partials: true`, a grey partial of the
   changed rows), so nothing needs settling before the next sleep. Add
   `fast_greys: true` on the 4.2" to halve grey refreshes.

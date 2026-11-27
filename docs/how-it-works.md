@@ -30,7 +30,7 @@ measured are in [the 5.79" notes](crowpanel-579.md).
 
 ## The 4.2"
 
-`crowpanel_42` drives the 4.2" V1.2 board (the version is printed on the
+`crowpanel_42_v1_2` drives the 4.2" V1.2 board (the version is printed on the
 back, under the SKU), whose UC8276C has no waveforms in its OTP: every
 refresh runs one the driver loads. It shares `crowpanel_epaper` and the same wiring and options as
 `crowpanel_579`, with SPI at 10 MHz (the controller's spec limit). V1.0 boards
@@ -61,7 +61,7 @@ use an SSD1683 and are not supported yet.
 
 ```yaml
 display:
-  - platform: crowpanel_42
+  - platform: crowpanel_42_v1_2
     id: epd
     grey: true
     lambda: |-
@@ -126,7 +126,7 @@ Both boards share `grey_partials: glide` and `grey_partials: live` through
 
 ```yaml
 display:
-  - platform: crowpanel_42
+  - platform: crowpanel_42_v1_2
     grey: true
     grey_partials: glide  # no flash; greys settle exactly at the next grey refresh
 ```

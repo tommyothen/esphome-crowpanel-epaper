@@ -23,9 +23,9 @@ looks good, though I have not tested it.
 | Board | Platform |
 |---|---|
 | CrowPanel 5.79" (792x272, two SSD1683s) | `crowpanel_579` |
-| CrowPanel 4.2" V1.2 (400x300, UC8276C) | `crowpanel_42` |
+| CrowPanel 4.2" V1.2 (400x300, UC8276C) | `crowpanel_42_v1_2` |
 | CrowPanel 2.13" (122x250) | Next: work starts once a board is on the bench |
-| 5.79" or 4.2", without charge balance (experimental) | `crowpanel_579_turbo`, `crowpanel_42_turbo`: see [turbo](docs/turbo.md) |
+| 5.79" or 4.2", without charge balance (experimental) | `crowpanel_579_turbo`, `crowpanel_42_v1_2_turbo`: see [turbo](docs/turbo.md) |
 
 The 4.2" V1.0 has a different controller, an SSD1683, so these drivers cannot
 run it; ESPBoards' [component](https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2)
@@ -70,7 +70,7 @@ display:
       it.print(20, 20, id(font), Color::BLACK, "Hello");
 ```
 
-For the 4.2", use `crowpanel_42` in both places. Pin to a release tag or a full
+For the 4.2", use `crowpanel_42_v1_2` in both places. Pin to a release tag or a full
 commit SHA, since GitHub will not fetch a short one. The USB-C port resets the
 board into its bootloader, so flashing needs no BOOT button.
 

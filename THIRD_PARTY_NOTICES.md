@@ -1,7 +1,7 @@
 # Third-party notices
 
 The four-grey waveform in `components/crowpanel_579/crowpanel_579.cpp` and
-`components/crowpanel_42/crowpanel_42.cpp` is adapted from the `LUT_ALL` table in
+`components/crowpanel_42_v1_2/crowpanel_42_v1_2.cpp` is adapted from the `LUT_ALL` table in
 Waveshare's `epd4in2_V2.py`
 (<https://github.com/waveshareteam/e-Paper>), which carries this notice:
 

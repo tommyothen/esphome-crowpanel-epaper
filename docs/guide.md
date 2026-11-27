@@ -8,7 +8,7 @@ All pins default to the boards' fixed wiring, which the two share.
 |---|---|---|
 | `grey` | `false` | Full refreshes in four greys (about 4.2 s on 5.79", 3.7 s on 4.2") instead of black and white |
 | `grey_levels` | `4` | `4` or `7`. `7` runs three passes with a half step between each of the four greys (4.4 to 4.5 s on 5.79", 3.95 s on 4.2"); needs `grey: true` |
-| `grey_partials` | `false` | `glide`: no-flash glides to the new grey. `live`: continuous ticks towards the latest frame, for things that move. On `crowpanel_42`, also `true` for windowed grey partials (`crowpanel_579` rejects `true`: its controllers have no partial window). Needs `grey: true` and PSRAM |
+| `grey_partials` | `false` | `glide`: no-flash glides to the new grey. `live`: continuous ticks towards the latest frame, for things that move. On `crowpanel_42_v1_2`, also `true` for windowed grey partials (`crowpanel_579` rejects `true`: its controllers have no partial window). Needs `grey: true` and PSRAM |
 | `temperature_sensor` | none | Sensor ID for panel temperature in °C. On 5.79", switches self-balanced waveforms across temperature bands (without one, 50 Hz, 13 to 20 °C). On 4.2", overrides the panel's own sensor |
 | `full_update_every` | `30` | Updates per full refresh (`1` to `255`); `1` makes every update full. Live ticks do not increment this count |
 | `update_interval` | `never` | Most devices decide for themselves when to draw |
@@ -16,12 +16,12 @@ All pins default to the boards' fixed wiring, which the two share.
 | `cs_pin` | `GPIO45` | SPI chip select |
 | `dc_pin` | `GPIO46` | Data/command pin |
 | `reset_pin` | `GPIO47` | Panel reset pin |
-| `busy_pin` | `GPIO48` | Panel BUSY input (inverted by default on `crowpanel_42`, where the UC8276C holds BUSY low while working) |
+| `busy_pin` | `GPIO48` | Panel BUSY input (inverted by default on `crowpanel_42_v1_2`, where the UC8276C holds BUSY low while working) |
 | `power_pin` | `GPIO7` | Switches the panel's supply/ground; must be high before anything answers |
-| `data_rate` | `20MHz` | SPI clock rate (`10MHz` by default on `crowpanel_42`, the UC8276C's spec limit) |
+| `data_rate` | `20MHz` | SPI clock rate (`10MHz` by default on `crowpanel_42_v1_2`, the UC8276C's spec limit) |
 | `lambda`, `pages` | none | Standard ESPHome drawing options; at most one may be set |
 
-`crowpanel_42` adds one option and two calls:
+`crowpanel_42_v1_2` adds one option and two calls:
 
 | Option | Default | Notes |
 |---|---|---|
@@ -39,7 +39,7 @@ All pins default to the boards' fixed wiring, which the two share.
   data line. The 5.79"'s controllers could answer the same way, but that read
   has not been built for them yet.
 
-`crowpanel_579_turbo` and `crowpanel_42_turbo` take their board's options and
+`crowpanel_579_turbo` and `crowpanel_42_v1_2_turbo` take their board's options and
 require `grey: true`.
 
 ## Drawing
