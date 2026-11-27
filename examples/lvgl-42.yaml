@@ -1,0 +1,182 @@
+# ESPHome's own LVGL on the 4.2", no network. PRV and NEXT move the focus, OK uses the focused
+# widget, and HOME and EXIT move the slider. The bar at the bottom fills on its own every 5 s, so
+# changes keep coming without a press. Each change LVGL draws lands as one glide.
+esphome:
+  name: crowpanel-lvgl-42
+
+esp32:
+  variant: esp32s3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: UART0
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [crowpanel_42, crowpanel_epaper]
+
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+
+display:
+  - platform: crowpanel_42
+    id: epd
+    grey: true
+    fast_greys: true
+    grey_partials: glide
+    auto_clear_enabled: false
+
+globals:
+  - { id: presses, type: int, initial_value: "0" }
+  - { id: filled, type: int, initial_value: "0" }
+
+binary_sensor:
+  - platform: gpio
+    id: prv_button
+    pin: { number: GPIO6, inverted: true }
+    filters: [delayed_on: 20ms]
+  - platform: gpio
+    id: next_button
+    pin: { number: GPIO4, inverted: true }
+    filters: [delayed_on: 20ms]
+  - platform: gpio
+    id: ok_button
+    pin: { number: GPIO5, inverted: true }
+    filters: [delayed_on: 20ms]
+  - platform: gpio
+    id: home_button
+    pin: { number: GPIO2, inverted: true }
+    filters: [delayed_on: 20ms]
+  - platform: gpio
+    id: exit_button
+    pin: { number: GPIO1, inverted: true }
+    filters: [delayed_on: 20ms]
+
+lvgl:
+  displays: [epd]
+  update_when_display_idle: true
+  buffer_size: 100%
+  bg_color: 0xFFFFFF
+  text_color: 0x000000
+  keypads:
+    - prev: prv_button
+      next: next_button
+      enter: ok_button
+      left: exit_button
+      right: home_button
+  theme:
+    button:
+      bg_color: 0xFFFFFF
+      border_color: 0x000000
+      border_width: 2
+      shadow_width: 0
+      text_color: 0x000000
+      focused:
+        outline_color: 0x000000
+        outline_width: 3
+        outline_pad: 3
+      pressed:
+        bg_color: 0x000000
+        text_color: 0xFFFFFF
+    switch:
+      bg_color: 0xAAAAAA
+      focused:
+        outline_color: 0x000000
+        outline_width: 3
+        outline_pad: 3
+      checked:
+        bg_color: 0x000000
+    checkbox:
+      focused:
+        outline_color: 0x000000
+        outline_width: 3
+        outline_pad: 3
+    slider:
+      bg_color: 0xAAAAAA
+      focused:
+        outline_color: 0x000000
+        outline_width: 3
+        outline_pad: 4
+  widgets:
+    - label:
+        x: 14
+        y: 10
+        text: 'LVGL on the 4.2"'
+        text_font: montserrat_28
+    - label:
+        id: count_label
+        x: 14
+        y: 52
+        text: "Pressed 0 times"
+        text_color: 0x555555
+    - button:
+        x: 14
+        y: 80
+        width: 150
+        height: 50
+        on_click:
+          - lambda: id(presses)++;
+          - lvgl.label.update:
+              id: count_label
+              text:
+                format: "Pressed %d times"
+                args: [id(presses)]
+        widgets:
+          - label:
+              align: center
+              text: "Press me"
+              text_font: montserrat_20
+    - switch:
+        x: 190
+        y: 90
+    - checkbox:
+        x: 270
+        y: 92
+        text: "Greys"
+    - label:
+        id: slider_label
+        x: 14
+        y: 150
+        text: "Slider 40"
+    - slider:
+        id: slide
+        x: 24
+        y: 178
+        width: 352
+        value: 40
+        on_value:
+          - lvgl.label.update:
+              id: slider_label
+              text:
+                format: "Slider %d"
+                args: ["(int) x"]
+    - obj: { x: 14, y: 214, width: 88, height: 30, bg_color: 0x000000, border_width: 0, radius: 0 }
+    - obj: { x: 110, y: 214, width: 88, height: 30, bg_color: 0x555555, border_width: 0, radius: 0 }
+    - obj: { x: 206, y: 214, width: 88, height: 30, bg_color: 0xAAAAAA, border_width: 0, radius: 0 }
+    - obj: { x: 302, y: 214, width: 84, height: 30, bg_color: 0xFFFFFF, border_width: 1, border_color: 0x000000, radius: 0 }
+    - bar:
+        id: auto_bar
+        x: 14
+        y: 262
+        width: 372
+        height: 18
+        value: 0
+        bg_color: 0xAAAAAA
+        indicator:
+          bg_color: 0x000000
+
+interval:
+  - interval: 5s
+    then:
+      - lvgl.bar.update:
+          id: auto_bar
+          value: !lambda return id(filled) = (id(filled) + 10) % 110;

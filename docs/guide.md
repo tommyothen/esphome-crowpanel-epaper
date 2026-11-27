@@ -118,6 +118,27 @@ ESP32 sleeps part way through an update, panel RAM may no longer match the
 glass, unsettled pixels stay uncancelled, and the driver makes the next update
 a full one.
 
+## LVGL
+
+ESPHome's own `lvgl:` component works with these drivers. I have only run short
+tests, on the 4.2": a button, a switch, a checkbox, a slider, four grey swatches
+and a bar that fills every 5 s ([lvgl-42.yaml](../examples/lvgl-42.yaml)). It
+drew cleanly, and each change landed as one glide in 0.25 to 0.42 s. LVGL does
+not suit anything in my home, so I have not gone further: it is untried on the
+5.79", over long runs, with deep sleep and with animations. If you take it
+further, PRs are welcome.
+
+What it needs:
+
+- **On the display:** no `lambda`, and `auto_clear_enabled: false`. LVGL draws
+  into the driver's buffer, and its colours map to greys by luma as above, so
+  `grey: true` gives anti-aliased text.
+- **In `lvgl:`:** `update_when_display_idle: true`. LVGL then asks for one
+  refresh after each redraw, and waits while the panel is busy.
+- **For input:** `keypads:` with the buttons, such as PRV and NEXT as `prev` and
+  `next`, and OK as `enter`. In ESPHome 2026.10, `encoders:` driven by buttons
+  does not compile, as it wants the `rotary_encoder` component.
+
 ## Examples
 
 Every example needs no network: flash it over USB with
@@ -145,6 +166,9 @@ live mode animate on its own.
   or mirrored text means the rotation (or on the 5.79", the halves) is wrong;
   the 5.79"'s greys should match on both sides of the seam. The 4.2"'s shows
   seven greys, its own temperature and grey partials.
+- [lvgl-42.yaml](../examples/lvgl-42.yaml): ESPHome's LVGL on the 4.2", with
+  glides: PRV and NEXT move the focus, OK uses the focused widget, HOME and EXIT
+  move the slider, and a bar fills every 5 s (see [LVGL](#lvgl)).
 
 ## Limitations
 

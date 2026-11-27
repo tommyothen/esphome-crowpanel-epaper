@@ -1,53 +1,69 @@
 # Using the drivers outside ESPHome
 
-The drivers are ESPHome external components and only work inside ESPHome. That
-was a choice, and the MIT licence is there so you can take as much of them as
-you need somewhere else.
+These drivers are ESPHome external components, so on their own they only work
+inside ESPHome. If you are building in another framework, you are very welcome
+to take whatever parts help you. The project is under the MIT licence, and a
+lot of the panel work lives in plain C++ that you can adapt.
 
 ## Why ESPHome
 
-- **It does the plumbing.** SPI, pins, the buttons, deep sleep, fonts and
-  drawing, updates over the air and YAML configuration were all there, which
-  left the work for the panels themselves: their waveforms, charge balance,
-  greys, glides and live mode.
-- **It runs standalone.** Home Assistant is optional, and none of the examples
-  needs it or a network.
-- **It had nothing for these boards.** ESPHome's own drivers have no model for
-  either one.
+I run Home Assistant at home and already have other boards in ESPHome, so I
+wanted these displays to plug in the same way as everything else. ESPHome also
+handled SPI, the buttons, deep sleep, fonts and updates over the air, which
+left the time for the panels themselves.
+
+You do not need Home Assistant to use them, though. ESPHome runs on its own,
+and none of the examples needs Home Assistant or a network. ESPHome's own LVGL
+works with them too, in the short tests I have run ([LVGL](guide.md#lvgl)). For
+a driver built around LVGL,
+[ESPBoards' component](https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2)
+looks good for the same boards, though I have not tested it.
 
 ## What carries over
 
-Plain logic and data, with little of ESPHome in it:
+Most of the panel logic and data has little of ESPHome in it:
 
-- **The waveforms,** and the compile-time checks that keep them balanced, in
-  each board's `.cpp` under `components/`.
-- **The tunings:** frame counts, glide tables and tick curves, each with how it
-  was measured, in the same files and in the panel notes.
-- **The controller sequences:** start-up, RAM windows, the 5.79"'s two
-  controllers in cascade and the 4.2"'s partial window.
-- **The algorithms** in the shared core, `components/crowpanel_epaper/`: which
-  pixels a fast partial left out of balance and how that is cancelled, the
-  glides' doses and their drive record, and the live mode's tick model.
+- **Waveforms and balance checks.** Each board's `.cpp` file under `components/`
+  holds the waveforms and the compile-time `static_assert` checks that keep
+  them balanced.
+- **Tunings.** Frame counts, glide tables and tick curves live in those same
+  files and in the panel notes for the [5.79"](crowpanel-579.md) and
+  [4.2"](crowpanel-42.md).
+- **Controller sequences.** The board files also cover start-up, RAM windows,
+  the 5.79"'s two controllers in cascade and the 4.2"'s partial window.
+- **The shared core.** `components/crowpanel_epaper/` tracks which pixels a fast
+  partial left out of balance and cancels that, and holds the glides' doses and
+  drive record as well as the live mode's tick model.
 
 ## What you would replace
 
-- **The display base.** The drivers build on ESPHome's `epaper_spi`, whose
+To run the drivers somewhere else, these are the ESPHome parts you would swap
+out:
+
+- **The display base.** The drivers build on ESPHome's `epaper_spi`, where
   `EPaperBase` runs each update as a state machine stepped from ESPHome's loop.
-  Step it from a task of your own instead.
-- **Drawing.** Pixels land in a buffer of 4-bit levels, 0 (black) to 6
-  (white). Put your own drawing in front of it: LVGL's flush callback, Adafruit
-  GFX or your own.
-- **SPI and pins:** ESP-IDF's `spi_master`, or Arduino's SPI.
-- **The small things:** logging, PSRAM allocation and the hook that settles
-  the panel before deep sleep.
-- **The YAML options,** in each board's `display.py`. The setters on the C++
-  classes do the same job.
+  You can step it from a task of your own instead.
+- **Drawing.** Pixels go into a buffer of 4-bit levels from 0 (black) to 6
+  (white), so you can put LVGL's flush callback, Adafruit GFX or your own
+  drawing code in front of it.
+- **SPI and pins.** ESP-IDF's `spi_master` or Arduino's SPI can replace
+  ESPHome's SPI and pin handling.
+- **The smaller pieces.** Logging, PSRAM allocation and the hook that settles
+  the panel before deep sleep will need equivalents in your setup.
+- **YAML options.** Each board's `display.py` turns the YAML into calls to the
+  C++ setters, so you can call those setters directly.
 
-## Before you start
+## Notes on porting
 
-- We have not ported them ourselves, so expect ESPHome assumptions in more
-  places than this list.
-- Keep the MIT licence's notice, and Waveshare's for the four-grey waveform
-  ([THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)).
-- If you build something with them, a link back is appreciated, and so is a
-  [star on GitHub](https://github.com/tommyothen/esphome-crowpanel-epaper).
+I have not ported the drivers myself, so you will likely find more
+ESPHome-specific bits in the code than are listed here.
+
+Everything here is under the MIT licence, so all it asks is that the licence
+notice stays with anything you reuse. The four-grey waveform is adapted from
+Waveshare's, so its notice in
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) goes with that part.
+
+If you adapt the drivers or build something with them, I would love to see
+what you make. A link back is always appreciated, and if the project helped
+you, a [star on GitHub](https://github.com/tommyothen/esphome-crowpanel-epaper)
+helps other CrowPanel owners find it.

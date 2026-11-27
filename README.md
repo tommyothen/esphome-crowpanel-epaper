@@ -11,11 +11,11 @@ Home Assistant or a network; none of the examples needs either.
 - **Kind to the panel.** Every waveform is charge-balanced, checked when it compiles.
 - **Deep sleep** that keeps the picture.
 
-No other driver for these boards that we know of has greys, glides or a live
-mode: see [how it compares](docs/other-drivers.md). For LVGL, use ESPBoards'
-[component](https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2),
-which is built for it: this one is about the panels' own refreshes and greys,
-and has not been tried with LVGL.
+No other driver for these boards that I know of has greys, glides or a live
+mode: see [how it compares](docs/other-drivers.md). ESPHome's own LVGL works
+with them in short tests ([LVGL](docs/guide.md#lvgl)). For a driver built around
+LVGL, ESPBoards' [component](https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2)
+looks good, though I have not tested it.
 
 ## Boards
 
@@ -91,8 +91,8 @@ The same pages, searchable, at
 - [Guide](docs/guide.md): every option, drawing, the buttons, deep sleep, examples and limitations
 - [How it works](docs/how-it-works.md): each board, charge balance, glides, live mode and temperature
 - [Turbo](docs/turbo.md): the experimental unbalanced drivers, and their risks
-- [Examples](examples/): two demos, two live demos and two test cards
-- [Outside ESPHome](docs/outside-esphome.md): why ESPHome, and what adapting the drivers to another framework takes
+- [Examples](examples/): two demos, two live demos, two test cards and an LVGL test
+- [Outside ESPHome](docs/outside-esphome.md): why I chose ESPHome, and how to reuse the drivers in another framework
 - Panel notes and measurements: [5.79"](docs/crowpanel-579.md), [4.2"](docs/crowpanel-42.md)
 
 ## Thanks and licence

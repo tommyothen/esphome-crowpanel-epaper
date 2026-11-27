@@ -15,16 +15,17 @@ displays built on Elecrow's demos, GxEPD2 or ESPBoards' component.
   150 ms, on its own adapter rather than this board.
 - **ESPHome's own drivers** have no model for either board, as of 2026.11.
 
-What others have that this one does not: LVGL (ESPBoards, samperk1), the 4.2"
+What others have that this one does not: a design built around LVGL
+(ESPBoards, samperk1), the 4.2"
 V1.0 with an SSD1683 (ESPBoards), the panels' built-in fast modes (samperk1),
 and a page editor in Home Assistant
 ([epaper-panel](https://github.com/bek00letz/epaper-panel)).
 
-**If you want LVGL,** use
+**LVGL.** ESPHome's own LVGL works with this driver in short tests (see the
+[guide](guide.md#lvgl)). For a driver built around it,
 [ESPBoards' component](https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2),
-which is built for it, or [samperk1's](https://github.com/samperk1/esphome-crowpanel-579)
-on the 5.79". This one is about the panels' own refreshes and greys, and has not
-been tried with LVGL.
+or [samperk1's](https://github.com/samperk1/esphome-crowpanel-579) on the 5.79",
+looks good, though I have not tested either.
 
 ## What this driver took from them
 
