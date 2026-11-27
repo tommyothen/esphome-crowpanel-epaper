@@ -57,7 +57,7 @@ static constexpr uint8_t BORDER_GREY = 0x03;
 // so no refresh leaves a net drive on any pixel.
 
 // Waveshare's four-grey waveform for their 4.2in V2 panel, also an SSD1683, from their
-// epd4in2_V2.py, with three changes. Group 1, which only shakes the particles (the same balanced
+// epd4in2_V2.py (their notice is in THIRD_PARTY_NOTICES.md), with three changes. Group 1, which only shakes the particles (the same balanced
 // drive in every table), runs once rather than five times: the refresh takes 3.7 s rather than
 // 5.5 s, and the four greys measure the same. The end option is 0x22, as the datasheet asks,
 // which discharges the pixels after the last phase; Waveshare's 0x07 leaves them charged to it.

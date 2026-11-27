@@ -1,7 +1,7 @@
 # CrowPanel 5.79" panel notes
 
 From Elecrow's schematics and demos, GxEPD2's GDEY0579T93 driver, the other
-community drivers listed in [Prior art](../README.md#prior-art), and testing on
+community drivers listed in [Other drivers](other-drivers.md), and testing on
 the board.
 
 - **Pins.** SPI clock GPIO12, data GPIO11, CS 45, DC 46, reset 47, BUSY 48.

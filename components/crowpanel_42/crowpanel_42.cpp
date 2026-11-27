@@ -53,9 +53,10 @@ static constexpr int frames(const uint8_t *waveform, int t) {
   return total;
 }
 
-// Waveshare's four-grey waveform for their 4.2in V2 panel, as the 5.79" driver runs it: group 1
-// once rather than five times. The grey waveforms here keep its VCOM, white and black tables and
-// retune its dark and light ones.
+// Waveshare's four-grey waveform for their 4.2in V2 panel (their notice is in
+// THIRD_PARTY_NOTICES.md), as the 5.79" driver runs it: group 1 once rather than five times.
+// The grey waveforms here keep its VCOM, white and black tables and retune its dark and light
+// ones.
 static constexpr uint8_t GREY_LUT[WAVEFORM] = {
   // VCOM, then a table per pixel state; 6 groups each of RP, phases A to D, SR_AB, SR_CD
   0x01, 0x0A, 0x1B, 0x0F, 0x03, 0x01, 0x01,  // VCOM group 0
