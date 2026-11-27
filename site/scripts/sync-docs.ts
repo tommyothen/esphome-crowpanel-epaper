@@ -5,8 +5,8 @@
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, posix } from 'node:path';
 
-const REPO = 'https://github.com/tommyothen/crowpanel-epaper';
-const SITE = 'https://tommyothen.github.io/crowpanel-epaper/';
+const REPO = 'https://github.com/tommyothen/esphome-crowpanel-epaper';
+const SITE = 'https://tommyothen.github.io/esphome-crowpanel-epaper/';
 const root = join(import.meta.dirname, '..', '..');
 const out = join(import.meta.dirname, '..', 'src', 'content', 'docs');
 

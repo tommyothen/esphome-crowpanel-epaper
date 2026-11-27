@@ -2,14 +2,14 @@ import starlight from '@astrojs/starlight';
 import { defineConfig } from 'astro/config';
 import { inkTheme } from './src/ink-theme';
 
-const REPO = 'https://github.com/tommyothen/crowpanel-epaper';
+const REPO = 'https://github.com/tommyothen/esphome-crowpanel-epaper';
 
 export default defineConfig({
   site: 'https://tommyothen.github.io',
-  base: '/crowpanel-epaper',
+  base: '/esphome-crowpanel-epaper',
   integrations: [
     starlight({
-      title: 'crowpanel-epaper',
+      title: 'esphome-crowpanel-epaper',
       description:
         "ESPHome display drivers for ELECROW's CrowPanel ESP32-S3 e-paper boards: even greys, partials without a flash, glides and a live mode.",
       social: [{ icon: 'github', label: 'GitHub', href: REPO }],
@@ -35,7 +35,7 @@ export default defineConfig({
             { label: '4.2" notes', slug: 'crowpanel-42' },
           ],
         },
-        { label: 'About', items: ['other-drivers'] },
+        { label: 'About', items: ['outside-esphome', 'other-drivers'] },
       ],
     }),
   ],

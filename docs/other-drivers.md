@@ -20,6 +20,12 @@ V1.0 with an SSD1683 (ESPBoards), the panels' built-in fast modes (samperk1),
 and a page editor in Home Assistant
 ([epaper-panel](https://github.com/bek00letz/epaper-panel)).
 
+**If you want LVGL,** use
+[ESPBoards' component](https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2),
+which is built for it, or [samperk1's](https://github.com/samperk1/esphome-crowpanel-579)
+on the 5.79". This one is about the panels' own refreshes and greys, and has not
+been tried with LVGL.
+
 ## What this driver took from them
 
 - **Waveshare:** the four-grey waveform, from their 4.2" V2 code
@@ -32,7 +38,6 @@ and a page editor in Home Assistant
 - **crowtides:** notes on the 5.79"'s two controllers.
 
 ## Prior art
-
 
 - Elecrow's demos: <https://github.com/Elecrow-RD/CrowPanel-ESP32-5.79-E-paper-HMI-Display-with-272-792>
 - GxEPD2's GDEY0579T93: <https://github.com/ZinggJM/GxEPD2/blob/master/src/gdey/GxEPD2_579_GDEY0579T93.cpp>

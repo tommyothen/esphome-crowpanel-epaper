@@ -9,7 +9,7 @@ PSRAM, and needs its board's component listed too:
 
 ```yaml
 external_components:
-  - source: github://tommyothen/crowpanel-epaper@v1.0.0
+  - source: github://tommyothen/esphome-crowpanel-epaper@v1.0.0
     components: [crowpanel_42_turbo, crowpanel_42, crowpanel_epaper]
 
 display:

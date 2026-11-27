@@ -1,7 +1,8 @@
-# crowpanel-epaper
+# esphome-crowpanel-epaper
 
 ESPHome display drivers for ELECROW's CrowPanel ESP32-S3 e-paper boards, the
-5.79" and the 4.2" V1.2.
+5.79" and the 4.2" V1.2. They work in any ESPHome firmware, with or without
+Home Assistant or a network; none of the examples needs either.
 
 - **Even greys.** Four or seven, tuned on each panel and measured as an eye sees them.
 - **Partial refreshes** in about half a second, without a flash, that leave greys alone.
@@ -11,7 +12,10 @@ ESPHome display drivers for ELECROW's CrowPanel ESP32-S3 e-paper boards, the
 - **Deep sleep** that keeps the picture.
 
 No other driver for these boards that we know of has greys, glides or a live
-mode: see [how it compares](docs/other-drivers.md).
+mode: see [how it compares](docs/other-drivers.md). For LVGL, use ESPBoards'
+[component](https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2),
+which is built for it: this one is about the panels' own refreshes and greys,
+and has not been tried with LVGL.
 
 ## Boards
 
@@ -19,6 +23,7 @@ mode: see [how it compares](docs/other-drivers.md).
 |---|---|
 | CrowPanel 5.79" (792x272, two SSD1683s) | `crowpanel_579` |
 | CrowPanel 4.2" V1.2 (400x300, UC8276C) | `crowpanel_42` |
+| CrowPanel 2.13" (122x250) | Next: work starts once a board is on the bench |
 | Either, without charge balance (experimental) | `crowpanel_579_turbo`, `crowpanel_42_turbo`: see [turbo](docs/turbo.md) |
 
 The 4.2" V1.0, with an SSD1683, is not supported.
@@ -27,7 +32,7 @@ The 4.2" V1.0, with an SSD1683, is not supported.
 
 ```yaml
 external_components:
-  - source: github://tommyothen/crowpanel-epaper@v1.0.0
+  - source: github://tommyothen/esphome-crowpanel-epaper@v1.0.0
     components: [crowpanel_579, crowpanel_epaper]
 
 esp32:
@@ -81,19 +86,20 @@ What each one costs, and when not to use it: [choosing a mode](docs/choosing-a-m
 ## More
 
 The same pages, searchable, at
-<https://tommyothen.github.io/crowpanel-epaper/>.
+<https://tommyothen.github.io/esphome-crowpanel-epaper/>.
 
 - [Guide](docs/guide.md): every option, drawing, the buttons, deep sleep, examples and limitations
 - [How it works](docs/how-it-works.md): each board, charge balance, glides, live mode and temperature
 - [Turbo](docs/turbo.md): the experimental unbalanced drivers, and their risks
 - [Examples](examples/): two demos, two live demos and two test cards
+- [Outside ESPHome](docs/outside-esphome.md): why ESPHome, and what adapting the drivers to another framework takes
 - Panel notes and measurements: [5.79"](docs/crowpanel-579.md), [4.2"](docs/crowpanel-42.md)
 
 ## Thanks and licence
 
 Built on what [other projects](docs/other-drivers.md) worked out first. MIT
-licence; the four-grey waveform is adapted from Waveshare's, under the notice in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+licence, so take as much as you need; the four-grey waveform is adapted from
+Waveshare's, under the notice in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-If you use these drivers, a [star on GitHub](https://github.com/tommyothen/crowpanel-epaper)
+If you use these drivers, a [star on GitHub](https://github.com/tommyothen/esphome-crowpanel-epaper)
 would be much appreciated: it helps other CrowPanel owners find them.
