@@ -80,6 +80,9 @@ What each one costs, and when not to use it: [choosing a mode](docs/choosing-a-m
 
 ## More
 
+The same pages, searchable, at
+<https://tommyothen.github.io/crowpanel-epaper/>.
+
 - [Guide](docs/guide.md): every option, drawing, the buttons, deep sleep, examples and limitations
 - [How it works](docs/how-it-works.md): each board, charge balance, glides, live mode and temperature
 - [Turbo](docs/turbo.md): the experimental unbalanced drivers, and their risks

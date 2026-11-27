@@ -1,0 +1,59 @@
+/* The e-paper look: paper and ink by day, ink-black paper by night, and the panels' seven
+   greys along the top. Overrides Starlight's colour properties (see its style/props.css). */
+
+:root[data-theme='light'] {
+  --sl-color-white: #1d1d1b;
+  --sl-color-gray-1: #2a2926;
+  --sl-color-gray-2: #3a3833;
+  --sl-color-gray-3: #5a5750;
+  --sl-color-gray-4: #8a877f;
+  --sl-color-gray-5: #bdb9af;
+  --sl-color-gray-6: #dad6cc;
+  --sl-color-gray-7: #e6e3da;
+  --sl-color-black: #eeece6;
+  --sl-color-accent-low: #dad6cc;
+  --sl-color-accent: #1d1d1b;
+  --sl-color-accent-high: #1d1d1b;
+  --sl-color-text-accent: #1d1d1b;
+  --sl-color-bg-nav: #eeece6;
+  --sl-color-bg-sidebar: #eeece6;
+  --sl-color-hairline-light: #dad6cc;
+  --sl-color-hairline-shade: #cfccc3;
+}
+
+:root {
+  --sl-color-white: #f2f0ea;
+  --sl-color-gray-1: #e2dfd7;
+  --sl-color-gray-2: #cfccc3;
+  --sl-color-gray-3: #a29f96;
+  --sl-color-gray-4: #6f6c65;
+  --sl-color-gray-5: #3a3833;
+  --sl-color-gray-6: #1d1d1b;
+  --sl-color-black: #000;
+  --sl-color-accent-low: #1d1d1b;
+  --sl-color-accent: #eeece6;
+  --sl-color-accent-high: #f2f0ea;
+  --sl-color-text-accent: #eeece6;
+  --sl-color-bg-nav: #000;
+  --sl-color-bg-sidebar: #000;
+}
+
+/* The seven greys, ink to paper. */
+.header::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 5px;
+  background: linear-gradient(to right, #1d1d1b 0.00% 14.29%, #3b3a38 14.29% 28.57%, #5b5a57 28.57% 42.86%, #7d7c78 42.86% 57.14%, #a1a09b 57.14% 71.43%, #c7c5c0 71.43% 85.71%, #eeece6 85.71% 100.00%);
+}
+
+/* Links are ink, so they carry an underline. */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* Tables ruled like the mock: a heavy rule under the head, hairlines between rows. */
+.sl-markdown-content th {
+  border-bottom: 2px solid var(--sl-color-white);
+}

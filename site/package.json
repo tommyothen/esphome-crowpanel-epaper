@@ -1,0 +1,16 @@
+{
+  "name": "crowpanel-epaper-docs",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "sync": "node scripts/sync-docs.ts",
+    "dev": "pnpm sync && astro dev",
+    "build": "pnpm sync && astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.43.2",
+    "astro": "^7.4.13"
+  }
+}
