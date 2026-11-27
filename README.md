@@ -26,13 +26,13 @@ component available.
 
 A 5.79" drawing in four greys once a minute; for the 4.2", use `crowpanel_42`
 for both the component and the platform. Pin `external_components` to a full
-commit SHA or a tag, since GitHub will not fetch a short SHA. The board's USB-C
+commit SHA or a release tag, since GitHub will not fetch a short SHA. The board's USB-C
 port is a CH340 on UART0 that resets the board into its bootloader, so flashing
 needs no BOOT button.
 
 ```yaml
 external_components:
-  - source: github://tommyothen/crowpanel-epaper@25006da249991be4cb9eb68e37f439088105b337  # a full commit SHA or a tag
+  - source: github://tommyothen/crowpanel-epaper@v1.0.0  # a release tag, or a full commit SHA
     components: [crowpanel_579, crowpanel_epaper]  # crowpanel_epaper is the core both boards share
 
 esp32:
@@ -378,7 +378,7 @@ PSRAM, and needs its board's component listed too:
 
 ```yaml
 external_components:
-  - source: github://tommyothen/crowpanel-epaper@<a full commit SHA or a tag>
+  - source: github://tommyothen/crowpanel-epaper@v1.0.0
     components: [crowpanel_42_turbo, crowpanel_42, crowpanel_epaper]
 
 display:
