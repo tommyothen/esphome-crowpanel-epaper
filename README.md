@@ -28,7 +28,7 @@ whether it needs greys.
 | Platform or mode | Use for | Time and look | Needs | Risks and limits |
 |---|---|---|---|---|
 | `crowpanel_579` / `crowpanel_42`, `grey: false` (default) | Plain black and white, or the quickest full refresh on the 4.2" | Full B&W: about 3.7 s (5.79" OTP) or 1.15 to 1.3 s (4.2"). Flashes. Fast partials 0.4 to 0.5 s | Standard pins; 54 KB / 30 KB RAM for fast partials | Black and white only; no anti-aliased text |
-| `grey: true` (4 greys) | Dashboards, anti-aliased text (`bpp: 2`), wake-draw-sleep displays | Full refresh: about 4.2 s (5.79") or 3.7 s (4.2"). Flashes | `grey: true` | On the 5.79" dark grey sits close to black; on the 4.2" greys are even thirds |
+| `grey: true` (4 greys) | Dashboards, anti-aliased text (`bpp: 2`), wake-draw-sleep displays | Full refresh: about 4.2 s (5.79") or 3.7 s (4.2"). Flashes | `grey: true` | On the 5.79" dark grey sits darker than an even third; on the 4.2" greys are near even thirds |
 | `grey_levels: 7` | Shading, pictures, `bpp: 4` text, or even grey steps on the 5.79" | Full refresh: 4.4 to 4.5 s (5.79") or 3.95 s (4.2"), three passes. Flashes | `grey: true` | Longer than four greys |
 | `fast_greys: true` (4.2" only) | 4.2" dashboards or pictures that run grey refreshes often | Full 4 or 7 greys in about 2.0 s; 7-grey partial in 2.3 s. Flashes | `crowpanel_42`, `grey: true` | History matches slow greys (within 0.09); less field time than slow greys |
 | Fast partials (`grey_partials: false`, default) | Clocks, counters, minute dashboards, button and dial input | 0.4 to 0.5 s (5.79") or 0.44 s (4.2"); cold partial after wake 1.3 s or 0.98 s. No flash | 54 KB / 30 KB RAM for balance tracking | Changed pixels show B&W until the next full refresh (or `request_grey_partial()` on 4.2"); full-refresh blacks clear only to grey; each push is out of balance until cancelled or settled |
@@ -294,7 +294,7 @@ Draw with `Color::BLACK` on `Color::WHITE` paper.
 - With four greys, colours map by luma: below 64 is black, below 128 dark grey,
   below 192 light grey, and the rest white. Fonts with `bpp: 2` give
   anti-aliased text on a grey refresh. On the 5.79" the four greys keep
-  Waveshare's spacing, where dark grey sits close to black and makes
+  Waveshare's spacing, where dark grey sits darker than an even third and makes
   anti-aliased text look bold; on the 4.2" they are even thirds.
 - With `grey_levels: 7`, luma maps to seven even steps, and `bpp: 4` fonts use
   them. Seven greys space the four base levels evenly first, so dark grey
@@ -552,6 +552,11 @@ Both test cards need no network: flash and read logs over USB with
   uncancelled and forces a full refresh on the next wake. Reflashing or cutting
   power while glides or live ticks have unpaid drive loses the PSRAM record;
   that drive stays on the glass until later refreshes clear it.
+- **Greys tuned on a camera.** Every grey, glide and tick was tuned on a laptop
+  camera's readings at a fixed exposure. Measured as perceptual lightness
+  instead, both panels' dark greys sit light: the 5.79"'s seven greys by up to
+  0.16 of the black to white range, the 4.2"'s by 0.09. See "Measuring greys"
+  in [docs/crowpanel-579.md](docs/crowpanel-579.md#measuring-greys).
 - **CrowPanel 4.2".** V1.0 boards (SSD1683) are not supported, and its frame
   rate by temperature borrows the 5.79" panel's maker's curve until checked in
   a warm room.
