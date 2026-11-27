@@ -1,33 +1,42 @@
 # Other drivers and thanks
 
+This driver builds on a lot of other people's work. Elecrow, Waveshare, GxEPD2,
+ESPBoards, samperk1 and crowtides all worked out things I would otherwise have
+spent weeks on, and what came from each is below. Thank you to all of them.
+
 ## How this one compares
 
-Checked on 2026-11-27 against the projects under [Prior art](#prior-art) and about
-20 other public ones that drive these boards, most of them single-purpose
-displays built on Elecrow's demos, GxEPD2 or ESPBoards' component.
+I looked at the projects under [Prior art](#prior-art) and about 20 other public
+ones that drive these boards, on 2026-11-27. Most are displays built for one job
+on top of Elecrow's demos, GxEPD2 or ESPBoards' component, and plenty of them do
+that job well.
 
-- **Greys.** No other driver for either board offers greys. This one has four
-  or seven, tuned on each panel in perceptual lightness.
-- **Balance.** None of the others records or cancels the drive its partial
-  refreshes leave, or checks its waveforms' balance when it compiles.
-- **Glides and live mode.** None changes greys without flashing or animates.
-  The fastest found elsewhere refreshes a whole bare 5.79" panel in about
+Where this one differs, as far as I could find:
+
+- **Greys.** I could not find another driver for either board with greys. This
+  one has four or seven, tuned on each panel in perceptual lightness.
+- **Balance.** It records the drive its partial refreshes leave and cancels it,
+  and checks its waveforms' balance when it compiles. I did not find that
+  elsewhere.
+- **Glides and live mode.** It changes greys without flashing, and can animate.
+  The fastest refresh I found elsewhere is a whole bare 5.79" panel in about
   150 ms, on its own adapter rather than this board.
-- **ESPHome's own drivers** have no model for either board, as of 2026.11.
+- **ESPHome.** ESPHome's own drivers do not cover either board yet (as of
+  2026.11), which is part of why this one exists.
 
-What others have that this one does not: a design built around LVGL
-(ESPBoards, samperk1), the 4.2"
-V1.0 with an SSD1683 (ESPBoards), the panels' built-in fast modes (samperk1),
-and a page editor in Home Assistant
-([epaper-panel](https://github.com/bek00letz/epaper-panel)).
+Others do things this one does not, and one of them may suit you better:
 
-**LVGL.** ESPHome's own LVGL works with this driver in short tests (see the
-[guide](guide.md#lvgl)). For a driver built around it,
-[ESPBoards' component](https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2),
-or [samperk1's](https://github.com/samperk1/esphome-crowpanel-579) on the 5.79",
-looks good, though I have not tested either.
+- **A design built around LVGL:**
+  [ESPBoards' component](https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2),
+  and [samperk1's](https://github.com/samperk1/esphome-crowpanel-579) for the
+  5.79". Both look good, though I have not tested them. ESPHome's own LVGL also
+  works with this driver, in short tests (see the [guide](guide.md#lvgl)).
+- **The 4.2" V1.0,** with its SSD1683: ESPBoards' component.
+- **The panels' built-in fast modes:** samperk1's.
+- **A page editor in Home Assistant:**
+  [epaper-panel](https://github.com/bek00letz/epaper-panel).
 
-## What this driver took from them
+## What I learnt from them
 
 - **Waveshare:** the four-grey waveform, from their 4.2" V2 code
   (`epd4in2_V2.py`), changed for these panels. Its permission notice is in

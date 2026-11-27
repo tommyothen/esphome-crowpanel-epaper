@@ -11,8 +11,9 @@ Home Assistant or a network; none of the examples needs either.
 - **Kind to the panel.** Every waveform is charge-balanced, checked when it compiles.
 - **Deep sleep** that keeps the picture.
 
-No other driver for these boards that I know of has greys, glides or a live
-mode: see [how it compares](docs/other-drivers.md). ESPHome's own LVGL works
+As far as I know, these are the only drivers for the CrowPanels with greys,
+glides or a live mode, and they owe a lot to
+[the ones that came before](docs/other-drivers.md). ESPHome's own LVGL works
 with them in short tests ([LVGL](docs/guide.md#lvgl)). For a driver built around
 LVGL, ESPBoards' [component](https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2)
 looks good, though I have not tested it.
@@ -24,9 +25,11 @@ looks good, though I have not tested it.
 | CrowPanel 5.79" (792x272, two SSD1683s) | `crowpanel_579` |
 | CrowPanel 4.2" V1.2 (400x300, UC8276C) | `crowpanel_42` |
 | CrowPanel 2.13" (122x250) | Next: work starts once a board is on the bench |
-| Either, without charge balance (experimental) | `crowpanel_579_turbo`, `crowpanel_42_turbo`: see [turbo](docs/turbo.md) |
+| 5.79" or 4.2", without charge balance (experimental) | `crowpanel_579_turbo`, `crowpanel_42_turbo`: see [turbo](docs/turbo.md) |
 
-The 4.2" V1.0, with an SSD1683, is not supported.
+The 4.2" V1.0 has a different controller, an SSD1683, so these drivers cannot
+run it; ESPBoards' [component](https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2)
+supports it. The version is printed on the back of the board, under the SKU.
 
 ## Getting started
 

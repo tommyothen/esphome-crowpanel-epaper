@@ -1,6 +1,6 @@
 """Display platform for the ELECROW CrowPanel ESP32-S3 4.2" e-paper, hardware V1.2.
 
-V1.2 boards (a green circular sticker on the back) drive the panel with a UC8276C. The
+V1.2 boards (printed on the back, under the SKU) drive the panel with a UC8276C. The
 board's wiring is fixed, so every pin defaults to it and the YAML only says how to draw:
 
     spi:

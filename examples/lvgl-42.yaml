@@ -1,6 +1,6 @@
-# ESPHome's own LVGL on the 4.2", no network. PRV and NEXT move the focus, OK uses the focused
-# widget, and HOME and EXIT move the slider. The bar at the bottom fills on its own every 5 s, so
-# changes keep coming without a press. Each change LVGL draws lands as one glide.
+# ESPHome's own LVGL on the 4.2", no network. The dial moves the focus, its press uses the
+# focused widget, and MENU and EXIT move the slider. The bar at the bottom fills on its own every
+# 5 s, so changes keep coming without a press. Each change LVGL draws lands as one glide.
 esphome:
   name: crowpanel-lvgl-42
 
@@ -41,19 +41,19 @@ globals:
 
 binary_sensor:
   - platform: gpio
-    id: prv_button
+    id: dial_up
     pin: { number: GPIO6, inverted: true }
     filters: [delayed_on: 20ms]
   - platform: gpio
-    id: next_button
+    id: dial_down
     pin: { number: GPIO4, inverted: true }
     filters: [delayed_on: 20ms]
   - platform: gpio
-    id: ok_button
+    id: dial_press
     pin: { number: GPIO5, inverted: true }
     filters: [delayed_on: 20ms]
   - platform: gpio
-    id: home_button
+    id: menu_button
     pin: { number: GPIO2, inverted: true }
     filters: [delayed_on: 20ms]
   - platform: gpio
@@ -68,11 +68,11 @@ lvgl:
   bg_color: 0xFFFFFF
   text_color: 0x000000
   keypads:
-    - prev: prv_button
-      next: next_button
-      enter: ok_button
+    - prev: dial_up
+      next: dial_down
+      enter: dial_press
       left: exit_button
-      right: home_button
+      right: menu_button
   theme:
     button:
       bg_color: 0xFFFFFF

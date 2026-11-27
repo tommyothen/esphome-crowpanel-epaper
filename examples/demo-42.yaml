@@ -1,7 +1,7 @@
-# A demo of the 4.2" driver, no network. Prev and next count. OK cycles how: glides, which take
+# A demo of the 4.2" driver, no network. The dial counts. Its press cycles how: glides, which take
 # each changed pixel straight to its new grey without flashing; fast black and white partials
 # that settle into greys 3 s after the last press (only around what changed); grey partials every
-# time; or fast partials alone. Home swaps four and seven greys with a full grey refresh; Exit
+# time; or fast partials alone. MENU swaps four and seven greys with a full grey refresh; EXIT
 # sleeps for 10 s. Fast greys throughout. Each refresh's time shows on the panel just after it
 # lands.
 esphome:
@@ -234,4 +234,4 @@ display:
       if (!std::isnan(id(epd).panel_temperature()))
         it.printf(390, 20, id(f_small), Color::BLACK, TextAlign::BASELINE_RIGHT, "Panel %.0f °C", id(epd).panel_temperature());
       it.print(10, 285, id(f_small), Color::BLACK, TextAlign::BASELINE_LEFT,
-               "Prev/next count   OK partials   Home greys   Exit sleep");
+               "Dial count   Press partials   Menu greys   Exit sleep");

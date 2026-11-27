@@ -3,13 +3,15 @@
 What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
 (UC8276c_A0.6), Elecrow's V1.2 demo code and GxEPD2's `GxEPD2_420_SE0420NQ04`.
 
-- **Which board.** V1.0 boards drive the panel with an SSD1683; V1.2 boards (a
-  green circular sticker on the back) with a UC8276C. `crowpanel_42` is for V1.2.
+- **Which board.** V1.0 boards drive the panel with an SSD1683; V1.2 boards
+  (the version is printed on the back, under the SKU) with a UC8276C.
+  `crowpanel_42` is for V1.2.
   BUSY tells them apart: the UC8276C holds it low while it works and high when
   idle, the opposite of the SSD1683.
 - **Pins** are the 5.79" board's: SPI clock GPIO12, data GPIO11, CS 45, DC 46,
-  reset 47, BUSY 48, panel power GPIO7. Buttons: HOME GPIO2, EXIT GPIO1, PRV
-  GPIO6, NEXT GPIO4, OK GPIO5.
+  reset 47, BUSY 48, panel power GPIO7. The controls
+  are the 5.79"'s too: dial up GPIO6, dial down GPIO4, dial press GPIO5, MENU
+  GPIO2, EXIT GPIO1.
 - **No waveforms in OTP.** Reading the OTP back (0xA2, after a dummy byte) gives
   0xFF throughout, and a refresh with the LUT from OTP runs for 3 ms and moves
   nothing. Every refresh runs a waveform the driver loads, as Elecrow's own code

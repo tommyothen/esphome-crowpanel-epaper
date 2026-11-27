@@ -63,15 +63,16 @@ Draw with `Color::BLACK` on `Color::WHITE` paper.
 
 The controls are plain GPIOs, active low with the board's own pull-ups, so they
 work with ESPHome's `gpio` binary sensor and can wake the board from deep sleep
-with `esp32_ext1_wakeup` in `ANY_LOW` mode. The two boards share them.
+with `esp32_ext1_wakeup` in `ANY_LOW` mode. Both boards have the same ones: a
+dial (a thumbwheel that also presses), MENU and EXIT.
 
-| 5.79" | 4.2" | GPIO |
-|---|---|---|
-| Dial up | PRV | GPIO6 |
-| Dial down | NEXT | GPIO4 |
-| Dial press | OK | GPIO5 |
-| MENU | HOME | GPIO2 |
-| EXIT | EXIT | GPIO1 |
+| Control | GPIO |
+|---|---|
+| Dial up | GPIO6 |
+| Dial down | GPIO4 |
+| Dial press | GPIO5 |
+| MENU | GPIO2 |
+| EXIT | GPIO1 |
 
 ```yaml
 binary_sensor:
@@ -135,8 +136,8 @@ What it needs:
   `grey: true` gives anti-aliased text.
 - **In `lvgl:`:** `update_when_display_idle: true`. LVGL then asks for one
   refresh after each redraw, and waits while the panel is busy.
-- **For input:** `keypads:` with the buttons, such as PRV and NEXT as `prev` and
-  `next`, and OK as `enter`. In ESPHome 2026.10, `encoders:` driven by buttons
+- **For input:** `keypads:` with the controls, such as the dial's up and down
+  as `prev` and `next`, and its press as `enter`. In ESPHome 2026.10, `encoders:` driven by buttons
   does not compile, as it wants the `rotary_encoder` component.
 
 ## Examples
@@ -148,10 +149,10 @@ live mode animate on its own.
 - [demo-579.yaml](../examples/demo-579.yaml): the dial counts with fast
   partials, the press swaps four and seven greys, MENU runs a grey refresh, EXIT
   sleeps for 10 s; each refresh's time shows on the panel after it lands.
-- [demo-42.yaml](../examples/demo-42.yaml): prev and next count; OK cycles
+- [demo-42.yaml](../examples/demo-42.yaml): the dial counts; its press cycles
   between glides, fast partials that settle into greys 3 s after the last press,
-  grey partials every time, and fast partials alone; Home swaps four and seven
-  greys, Exit sleeps for 10 s; uses fast greys throughout and shows the panel's
+  grey partials every time, and fast partials alone; MENU swaps four and seven
+  greys, EXIT sleeps for 10 s; uses fast greys throughout and shows the panel's
   temperature.
 - [live-579.yaml](../examples/live-579.yaml) and
   [live-42.yaml](../examples/live-42.yaml): live mode with nothing asking
@@ -167,8 +168,8 @@ live mode animate on its own.
   the 5.79"'s greys should match on both sides of the seam. The 4.2"'s shows
   seven greys, its own temperature and grey partials.
 - [lvgl-42.yaml](../examples/lvgl-42.yaml): ESPHome's LVGL on the 4.2", with
-  glides: PRV and NEXT move the focus, OK uses the focused widget, HOME and EXIT
-  move the slider, and a bar fills every 5 s (see [LVGL](#lvgl)).
+  glides: the dial moves the focus, its press uses the focused widget, MENU and
+  EXIT move the slider, and a bar fills every 5 s (see [LVGL](#lvgl)).
 
 ## Limitations
 

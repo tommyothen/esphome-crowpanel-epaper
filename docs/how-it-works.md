@@ -30,9 +30,9 @@ measured are in [the 5.79" notes](crowpanel-579.md).
 
 ## The 4.2"
 
-`crowpanel_42` drives the 4.2" V1.2 board (a green circular sticker on the
-back), whose UC8276C has no waveforms in its OTP: every refresh runs one the
-driver loads. It shares `crowpanel_epaper` and the same wiring and options as
+`crowpanel_42` drives the 4.2" V1.2 board (the version is printed on the
+back, under the SKU), whose UC8276C has no waveforms in its OTP: every
+refresh runs one the driver loads. It shares `crowpanel_epaper` and the same wiring and options as
 `crowpanel_579`, with SPI at 10 MHz (the controller's spec limit). V1.0 boards
 use an SSD1683 and are not supported yet.
 
