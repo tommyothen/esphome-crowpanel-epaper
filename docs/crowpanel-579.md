@@ -135,7 +135,7 @@ the board.
   1.66 s from 35 °C, while the partial runs 0.43 s at every temperature. The
   four-grey refresh at 37.5, 50, 75 and 100 Hz runs 4.78, 3.53, 2.35 and
   1.77 s, the same progression, so the driver switches frame rate at 12, 21
-  and 33 °C.
+  and 33 °C. (The deeper white since adds 27 frames: 4.2 s at 50 Hz.)
 - **Read back.** The controllers can report their temperature, RAM and display
   options, but only over the data line, which the board wires to one GPIO as
   an output. Reading would mean bit-banging it.
@@ -163,13 +163,38 @@ grey frame and after eight partials:
 | 1 | 3 | 3.00 s | dark and light grey a shade lighter |
 | 1 | 2 | 2.65 s | dark and light grey a shade lighter |
 
-Each frame is about 20 ms. None of them left a ghost of the frame before.
+Each frame is about 20 ms. None of them left a ghost of the frame before. The deeper white
+since adds 27 frames, 0.5 s at 50 Hz.
+
+## Measuring greys
+
+Every grey here was tuned on a laptop camera's JPEG codes at a fixed exposure, normalised
+between flat white and flat black frames. That reading depends on the exposure: on 2026-11-27
+the same seven-grey ramp read 0.18, 0.36, 0.54, 0.70 and 0.81 at an exposure of 200, 0.24,
+0.43, 0.64, 0.76 and 0.84 at 400, and 0.29, 0.48, 0.64, 0.73 and 0.81 at 700, the whites
+running into the camera's highlight knee. The camera is no power law either: it adds a pedestal
+of about 19 codes and lifts its shadows unless `backlight_compensation` is off.
+
+A reading that does not depend on the camera: photograph each frame at exposures of 50, 100,
+200 and 400 (exposure time is linear in light), fit the camera's inverse response, a cubic in
+the log of the code above the pedestal, jointly with every patch's light (a linear least
+squares; it fits to 3%), then place each grey's CIE L* between the black's and the white's.
+Read that way, the seven greys are 0.31, 0.49, 0.64, 0.75 and 0.83 against 0.17, 0.33, 0.50,
+0.67 and 0.83, up to 0.16 light in the darks, and the four greys 0.26 and 0.62 against 0.33
+and 0.67. The panel's black reflects 0.08 of its white. The waveforms are the ones tuned on
+2026-11-25, byte for byte bar the deeper white, and the old white read the same, so the panel
+has not moved: the yardstick has.
+
+The four greys stay as they are: one frame of white at 50 Hz, anywhere in group 3, moves dark
+grey 0.13 and light grey 0.08 (to 0.39 and 0.70), more than they are out. A faked 11 °C (37.5
+Hz) took the seven greys lighter still, to 0.29, 0.57, 0.73, 0.83 and 0.90 in codes, so the
+room's 12 °C is not the cause.
 
 ## Still open
 
-- Re-measure the seven greys since the grey refresh's white went deeper. On 2026-11-27, drawn
-  over a checkerboard, they read 0.00, 0.24 to 0.27, 0.43 to 0.50, 0.64 to 0.68, 0.77 to 0.79,
-  0.84 to 0.86 and 1.00 against 0.17, 0.33, 0.50, 0.67 and 0.83: up to 0.18 light.
+- Re-base the greys, glides and ticks on perceptual lightness (below). This panel's seven greys
+  are its darks most out, so they would move most, and its glides and ticks, tuned to land on
+  them, with them.
 - Thirteen greys: two more half-step passes, quarter steps, each band with its
   own length. One length for every band crosses the levels over.
 - A faster grey: shortening group 2 and nudging its phases to win the greys

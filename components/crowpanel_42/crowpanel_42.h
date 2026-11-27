@@ -38,7 +38,7 @@ class CrowPanel42 : public crowpanel_epaper::CrowPanelBase {
   // Partial updates redraw the window around what changed in greys, flashing only it, instead of
   // pushing the changed pixels to black or white. Needs grey.
   void set_grey_partials(bool grey_partials) { this->grey_partials_ = grey_partials; }
-  // Grey refreshes in two shakes and a push: about 1.9 s for four greys rather than 3.7, erasing the
+  // Grey refreshes in two shakes and a push: about 2 s for four greys rather than 3.7, erasing the
   // picture before as well.
   void set_fast_greys(bool fast_greys) { this->fast_greys_ = fast_greys; }
   // Make the next update, if partial, a grey refresh of the window around everything changed since

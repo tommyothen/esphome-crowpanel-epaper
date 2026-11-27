@@ -127,7 +127,8 @@ What the 4.2" V1.2 board turned out to be, from probing it, the UC8276 datasheet
   0.036 after two rounds, with the glide back from each glided level weighed in too (from
   glided black, a shallower black than a grey refresh leaves, the first table overshot by
   0.28). Two exact refreshes of the same cells differ by up to 0.10 here, so that is about the
-  floor. A box glides in 0.33 to 0.45 s, the whole panel in 1.06 s.
+  floor. A box glides in 0.33 to 0.45 s, the whole panel in 1.06 s; with the faster drawing
+  since, 0.32 to 0.38 s and 0.93 s.
 - **A glide's drive.** Each pixel's net push since its last balanced refresh is kept in PSRAM, a
   byte a pixel, in frames at 200 Hz. A grey refresh covering it, full or partial, starts with
   scans pushing it back by exactly that; a glide that would take a pixel past 127 frames runs as
@@ -260,6 +261,9 @@ ghost is the old black squares' reading less the old white squares'; "later" is 
 
 ## Still open
 
+- Re-base the greys, glides and ticks on perceptual lightness: see "Measuring greys" in
+  [the 5.79" notes](crowpanel-579.md#measuring-greys). Read that way, this panel's seven greys
+  are 0.25, 0.41, 0.54, 0.71 and 0.83 and its four 0.41 and 0.73, the darks up to 0.09 light.
 - Check the frame-rate curve in a warm room: it borrows the 5.79" panel's maker's.
 - Fast greys erase the picture before as well as the slow ones in half the time; once they have
   had more use, they could be the default.
