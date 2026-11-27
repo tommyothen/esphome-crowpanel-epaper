@@ -3,7 +3,10 @@
 These drivers are ESPHome external components, so on their own they only work
 inside ESPHome. If you are building in another framework, you are very welcome
 to take whatever parts help you. The project is under the MIT licence, and a
-lot of the panel work lives in plain C++ that you can adapt.
+lot of the panel work lives in plain C++ that you can adapt. If you do port it,
+[open an issue](https://github.com/tommyothen/esphome-crowpanel-epaper/issues)
+with a link and I will add it to the docs, so people on that framework can find
+it.
 
 ## Why ESPHome
 
@@ -64,6 +67,7 @@ Waveshare's, so its notice in
 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) goes with that part.
 
 If you adapt the drivers or build something with them, I would love to see
-what you make. A link back is always appreciated, and if the project helped
-you, a [star on GitHub](https://github.com/tommyothen/esphome-crowpanel-epaper)
-helps other CrowPanel owners find it.
+what you make, and a port can go in these docs (see the top of this page). A
+link back is always appreciated, and if the project helped you, a
+[star on GitHub](https://github.com/tommyothen/esphome-crowpanel-epaper) helps
+other CrowPanel owners find it.
