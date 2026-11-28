@@ -126,7 +126,7 @@ header.header::before {
   padding-bottom: var(--bezel-bottom);
 }
 .sidebar-content {
-  padding-bottom: calc(var(--bezel-bottom) + 1rem);
+  padding-bottom: var(--bezel-bottom);
 }
 
 /* The sidebar as the device's menu: heavy group labels, the current page in ink. */
@@ -188,4 +188,34 @@ h1#_top,
 }
 .sl-markdown-content td {
   border-bottom: 1px solid var(--grey-5);
+}
+
+/* The foot of the sidebar: the latest release and GitHub's star button. Links to GitHub but
+   without the arrow, as they read as figures, not as pages. Last in the sidebar, even below the
+   mobile menu's footer, and held just above the bottom bezel while the menu scrolls. */
+.sidebar-content .repo-stats {
+  order: 1;
+  position: sticky;
+  bottom: var(--bezel-bottom);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: auto 0 0;
+  padding: 0.5rem 0.5rem 0.75rem;
+  background: var(--paper);
+  border-top: 1px solid var(--grey-5);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.sidebar-content .repo-stats a {
+  padding: 0;
+  color: var(--grey-2);
+  text-decoration: none;
+}
+.sidebar-content .repo-stats a[data-version] {
+  font-weight: 800;
+  color: var(--ink);
+}
+.sidebar-content .repo-stats a::after {
+  content: none;
 }

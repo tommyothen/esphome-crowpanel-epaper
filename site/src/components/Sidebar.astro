@@ -1,0 +1,37 @@
+---
+// Starlight's sidebar with the latest release and GitHub's star button at its foot. The release is
+// fetched at build time, then again in the browser (once a session), as the site only rebuilds when
+// the docs change. The button fetches its own count.
+import Default from '@astrojs/starlight/components/Sidebar.astro';
+import { REPO_URL, sharedLatestVersion } from '../repo';
+
+const version = await sharedLatestVersion();
+---
+
+<Default><slot /></Default>
+
+<div class="repo-stats">
+  <a data-version href={`${REPO_URL}/releases/latest`}>{version}</a>
+  <a
+    class="github-button"
+    href={REPO_URL}
+    data-icon="octicon-star"
+    data-show-count="true"
+    data-color-scheme="no-preference: light; light: light; dark: light;"
+    aria-label="Star esphome-crowpanel-epaper on GitHub">Star</a
+  >
+</div>
+
+<script is:inline async defer src="https://buttons.github.io/buttons.js"></script>
+
+<script>
+  import { fetchLatestVersion } from '../repo';
+
+  const KEY = 'latest-version';
+  const version = sessionStorage.getItem(KEY) ?? (await fetchLatestVersion());
+  if (version) {
+    sessionStorage.setItem(KEY, version);
+    const link = document.querySelector('.repo-stats [data-version]');
+    if (link) link.textContent = version;
+  }
+</script>

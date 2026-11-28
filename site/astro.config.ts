@@ -1,8 +1,7 @@
 import starlight from '@astrojs/starlight';
 import { defineConfig } from 'astro/config';
 import { inkTheme } from './src/ink-theme';
-
-const REPO = 'https://github.com/tommyothen/esphome-crowpanel-epaper';
+import { REPO_URL as REPO } from './src/repo';
 
 export default defineConfig({
   site: 'https://tommyothen.github.io',
@@ -17,6 +16,7 @@ export default defineConfig({
       components: {
         ThemeProvider: './src/components/ThemeProvider.astro',
         ThemeSelect: './src/components/ThemeSelect.astro',
+        Sidebar: './src/components/Sidebar.astro',
       },
       expressiveCode: {
         themes: [inkTheme],
